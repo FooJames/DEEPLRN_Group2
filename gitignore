@@ -1,0 +1,27 @@
+# Datasets — large, downloaded from Roboflow, not meant to live in git
+datasets/
+data/
+
+# Training outputs — large, regenerable by re-running training
+runs/
+
+# Review artifacts from label_safe_unsafe.py (regenerable from datasets/ + the script)
+review_images/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Environment / secrets — never commit a Roboflow API key
+.env
+
+# OS/editor cruft
+.DS_Store
+.vscode/
+.idea/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
