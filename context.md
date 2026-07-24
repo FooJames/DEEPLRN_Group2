@@ -79,13 +79,13 @@ image, `data.yaml`) format.
 
 1. **Child detection dataset**
    - URL: https://universe.roboflow.com/sotukenn/child-detection-piuns
-   - 5,917 images, single class (`child`)
+   - 4,705 images, single class (`child`) — Roboflow v3
    - Pre-defined split: 87% train / 8% val / 5% test — **keep the
      creator's split**, do not reshuffle.
 
 2. **Harmful objects dataset**
    - URL: https://universe.roboflow.com/harmfull-objects/harmful-objects-wmmdi
-   - 4,705 images, 12 hazard classes (listed above)
+   - 5,917 images, 12 hazard classes (listed above) — Roboflow v1
    - Pre-defined split: 80% train / 13% val / 7% test — **keep the
      creator's split**.
 

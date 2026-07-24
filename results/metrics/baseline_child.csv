@@ -1,0 +1,2 @@
+timestamp,model,data,epochs,imgsz,batch,optimizer,smoke,mAP50,mAP50_95
+2026-07-25T02:10:22,child,data/child/data.yaml,100,640,16,auto,True,0.2985,0.1713
