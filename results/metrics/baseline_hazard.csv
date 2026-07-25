@@ -1,2 +1,2 @@
 timestamp,model,data,epochs,imgsz,batch,optimizer,smoke,mAP50,mAP50_95
-2026-07-25T02:15:51,hazard,data/hazard/data.yaml,100,640,16,auto,True,0.0209,0.0121
+2026-07-25T16:07:22,hazard,data/hazard/data.yaml,100,640,16,auto,False,0.5657,0.4072

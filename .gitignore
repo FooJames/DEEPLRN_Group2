@@ -5,6 +5,12 @@ data/
 # Training outputs — large, regenerable by re-running training
 runs/
 
+# Pretrained base weights auto-downloaded by ultralytics (re-fetched on demand)
+yolov8*.pt
+
+# Smoke-test metrics — throwaway (1 epoch on a data fraction), not deliverables
+results/metrics/smoke_*.csv
+
 # Review artifacts from label_safe_unsafe.py (regenerable from datasets/ + the script)
 review_images/
 

@@ -31,7 +31,10 @@ RESULTS_DIR = os.path.join("results", "metrics")
 
 def log_metrics(model_name, args, metrics):
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    path = os.path.join(RESULTS_DIR, f"baseline_{model_name}.csv")
+    # Smoke runs are throwaway (1 epoch on a data fraction) — keep them out of
+    # the baseline file so it only ever holds real, reportable runs.
+    prefix = "smoke" if args.smoke else "baseline"
+    path = os.path.join(RESULTS_DIR, f"{prefix}_{model_name}.csv")
     row = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "model": model_name,
