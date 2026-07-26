@@ -35,6 +35,9 @@ results/metrics/tuning_<model>.csv (the whole sweep, not just the winner).
 """
 
 import argparse
+import csv
+import glob
+import json
 import os
 import shutil
 
@@ -48,6 +51,52 @@ SPACE = {
     "cls": (0.2, 4.0),
     "dfl": (0.4, 6.0),
 }
+
+
+def _flatten(obj, prefix=""):
+    """Flatten nested dicts into single-level {a.b: value} — the ndjson schema
+    nests hyperparameters/metrics, and column names shouldn't depend on it."""
+    out = {}
+    for k, v in obj.items():
+        key = f"{prefix}{k}"
+        if isinstance(v, dict):
+            out.update(_flatten(v, f"{key}."))
+        else:
+            out[key] = v
+    return out
+
+
+def _clean_col(name):
+    """Readable column names: the ndjson nests everything under
+    hyperparameters./datasets.data.metrics/ etc, which makes an unreadable
+    header for a deliverable table."""
+    for prefix in ("hyperparameters.", "datasets.data.metrics/",
+                   "datasets.data.val/", "datasets.data."):
+        if name.startswith(prefix):
+            name = name[len(prefix):]
+            break
+    return name.replace("(B)", "").replace("mAP50-95", "mAP50_95").replace("/", "_")
+
+
+def ndjson_to_rows(path):
+    """One JSON object per line -> list of flat dicts sharing a column set."""
+    rows = []
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            flat = _flatten(json.loads(line))
+            row = {}
+            for k, v in flat.items():
+                if k.startswith("save_dirs"):
+                    continue          # session-specific paths, not results
+                c = _clean_col(k)
+                if c not in row:      # keeps top-level fitness over the nested dup
+                    row[c] = v
+            rows.append(row)
+    cols = list(dict.fromkeys(k for r in rows for k in r))  # union, stable order
+    return [{c: r.get(c, "") for c in cols} for r in rows]
 
 
 def main():
@@ -106,18 +155,37 @@ def main():
         resume=True,      # keeps a stable tune dir; exist_ok alone is ignored
     )
 
-    # Keep the WHOLE sweep as a deliverable, not just the winner.
+    # Keep the WHOLE sweep as a deliverable, not just the winner. The results
+    # file format changed across ultralytics versions: 8.3.x wrote
+    # tune_results.csv, 8.4.x writes tune_results.ndjson. Handle both.
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    for src, dst in (
-        ("tune_results.csv", f"tuning_{args.model}.csv"),
-        ("best_hyperparameters.yaml", f"tuning_{args.model}_best.yaml"),
-    ):
-        s = os.path.join(tune_dir, src)
-        if os.path.isfile(s):
-            shutil.copy2(s, os.path.join(RESULTS_DIR, dst))
-            print(f"[{args.model}] saved -> {os.path.join(RESULTS_DIR, dst)}")
-        else:
-            print(f"[{args.model}] WARNING: {s} not found")
+    dst = os.path.join(RESULTS_DIR, f"tuning_{args.model}.csv")
+    found = sorted(glob.glob(os.path.join(tune_dir, "tune_results.*")))
+    if not found:
+        print(f"[{args.model}] WARNING: no tune_results.* in {tune_dir} — "
+              f"the sweep table is a required deliverable; copy it manually.")
+    elif found[0].endswith(".csv"):
+        shutil.copy2(found[0], dst)
+        print(f"[{args.model}] saved -> {dst}")
+    else:
+        rows = ndjson_to_rows(found[0])
+        if rows:
+            cols = list(rows[0])
+            with open(dst, "w", newline="", encoding="utf-8") as fh:
+                w = csv.DictWriter(fh, fieldnames=cols)
+                w.writeheader()
+                w.writerows(rows)
+            print(f"[{args.model}] saved -> {dst} "
+                  f"({len(rows)} iterations, converted from "
+                  f"{os.path.basename(found[0])})")
+
+    best = os.path.join(tune_dir, "best_hyperparameters.yaml")
+    if os.path.isfile(best):
+        dst = os.path.join(RESULTS_DIR, f"tuning_{args.model}_best.yaml")
+        shutil.copy2(best, dst)
+        print(f"[{args.model}] saved -> {dst}")
+    else:
+        print(f"[{args.model}] WARNING: {best} not found")
 
 
 if __name__ == "__main__":

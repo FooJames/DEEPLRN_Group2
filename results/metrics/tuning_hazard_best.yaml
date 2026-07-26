@@ -1,0 +1,9 @@
+# 6/6 iterations complete ✅ (10753.35s)
+# Results saved to /content/drive/MyDrive/deeplrn_group2/runs/tune_hazard
+# Best fitness=0.36414 observed at iteration 4
+# Best fitness metrics are {'metrics/precision(B)': 0.6546, 'metrics/recall(B)': 0.45534, 'metrics/mAP50(B)': 0.50201, 'metrics/mAP50-95(B)': 0.36414, 'val/box_loss': 1.15872, 'val/cls_loss': 2.13523, 'val/dfl_loss': 0.93771, 'fitness': 0.36414}
+# Best fitness model is /content/drive/MyDrive/deeplrn_group2/runs/tune_hazard/weights
+lr0: 0.00088
+box: 8.14272
+cls: 0.75027
+dfl: 1.05913
