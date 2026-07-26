@@ -1,0 +1,19 @@
+# Per-class val metrics, hazard detector BASELINE (100 epochs, default hyperparams, optimizer=auto).
+# Source: YOLO.val() on runs/detect/hazard_baseline/weights/best.pt
+# CAVEAT: produced locally on ultralytics 8.3.130; the weights were TRAINED on
+# Colab 8.4.106, which reports overall mAP50=0.5657 vs 0.570 here. Regenerate
+# under the pinned 8.4.106 for final paper numbers.
+class,val_images,instances,precision,recall,mAP50,mAP50_95
+all,773,1425,0.566,0.586,0.570,0.413
+Axe,29,50,0.531,0.380,0.371,0.252
+Chainsaw,24,24,0.605,0.625,0.730,0.490
+Chisel,3,5,0.223,0.179,0.0545,0.0479
+Coin,155,367,0.718,0.845,0.855,0.751
+Drink,145,298,0.348,0.399,0.284,0.128
+Dumbbell,24,63,0.454,0.540,0.398,0.287
+Fork,153,270,0.673,0.659,0.644,0.376
+Hammer,24,27,0.433,0.667,0.525,0.355
+Knife,137,217,0.696,0.613,0.713,0.522
+Scissors,64,81,0.769,0.820,0.870,0.687
+Screwdriver,8,11,0.676,0.636,0.688,0.430
+Stapler,11,12,0.661,0.667,0.703,0.631
