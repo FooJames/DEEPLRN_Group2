@@ -17,10 +17,18 @@ WHY AN EXPLICIT OPTIMIZER (do not pass --optimizer auto):
     "best lr0" would be meaningless. The baseline ran auto (=AdamW, lr=6.25e-4
     for nc=12), so AdamW is the default here to stay comparable.
 
-RESUMABILITY: the tuner appends to runs/detect/tune_<model>/tune_results.csv
-after every iteration and re-reads that file to seed the next mutation. If
-Colab disconnects, re-running the same command continues the sweep — only
-the in-flight iteration is lost.
+RESUMABILITY (two things are required, both easy to get wrong):
+  1. `resume=True` — the Tuner does `exist_ok = resume`, so passing exist_ok
+     alone is silently overwritten and each run would start a FRESH
+     tune_<model>2/3/... dir instead of continuing. This script always passes
+     resume=True, so the dir is stable and the tuner seeds new mutations from
+     whatever tune_results.csv already exists.
+  2. `--project` on persistent storage — on Colab, runs/ lives in the
+     ephemeral session and is wiped on disconnect, which would delete the
+     very CSV that makes resume work. Point --project at a mounted Drive
+     path so the sweep survives across sessions.
+With both, re-running the same command continues the sweep and only the
+in-flight iteration is lost.
 
 Every iteration's hyperparameters + fitness are copied to
 results/metrics/tuning_<model>.csv (the whole sweep, not just the winner).
@@ -57,6 +65,9 @@ def main():
     ap.add_argument("--optimizer", default="AdamW",
                     help="explicit optimizer; 'auto' is rejected (see module docstring)")
     ap.add_argument("--weights", default="yolov8n.pt")
+    ap.add_argument("--project", default=None,
+                    help="output root; point at mounted Drive on Colab so the "
+                         "sweep survives a disconnect (default: runs/detect)")
     args = ap.parse_args()
 
     if args.optimizer == "auto":
@@ -69,6 +80,13 @@ def main():
     from ultralytics import YOLO
 
     tune_name = f"tune_{args.model}"
+    tune_dir = os.path.join(args.project or os.path.join("runs", "detect"), tune_name)
+    prior = os.path.join(tune_dir, "tune_results.csv")
+    if os.path.isfile(prior):
+        with open(prior, encoding="utf-8") as fh:
+            done = max(sum(1 for _ in fh) - 1, 0)  # minus header
+        print(f"[{args.model}] resuming: {done} iteration(s) already in {prior}")
+
     print(f"[{args.model}] tuning {list(SPACE)} | {args.iterations} iterations "
           f"x {args.epochs} epochs | optimizer={args.optimizer}")
 
@@ -82,14 +100,14 @@ def main():
         batch=args.batch,
         optimizer=args.optimizer,
         name=tune_name,
+        project=args.project,
         plots=False,      # tuning only needs the fitness number
         save=False,       # per-iteration weights are throwaway; Phase 4 retrains
-        exist_ok=True,    # allow resume into the same dir
+        resume=True,      # keeps a stable tune dir; exist_ok alone is ignored
     )
 
     # Keep the WHOLE sweep as a deliverable, not just the winner.
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    tune_dir = os.path.join("runs", "detect", tune_name)
     for src, dst in (
         ("tune_results.csv", f"tuning_{args.model}.csv"),
         ("best_hyperparameters.yaml", f"tuning_{args.model}_best.yaml"),
