@@ -64,12 +64,18 @@ def done_sizes(path):
         return {int(r["imgsz"]) for r in csv.DictReader(fh) if r.get("imgsz")}
 
 
-def run_dir(project, model, size):
+def run_name(model, size, tag=""):
+    """Run directory name. The tag keeps a re-run under different settings
+    from colliding with (or being mistaken for) an earlier one."""
+    return f"ablation_imgsz_{model}{('_' + tag) if tag else ''}_{size}"
+
+
+def run_dir(project, model, size, tag=""):
     root = project or os.path.join("runs", "detect")
-    return os.path.join(root, f"ablation_imgsz_{model}_{size}")
+    return os.path.join(root, run_name(model, size, tag))
 
 
-def epochs_completed(project, model, size):
+def epochs_completed(project, model, size, tag=""):
     """How many epochs a previous run actually finished (0 if none).
 
     Read from the run's results.csv — one row per completed epoch. Neither the
@@ -77,14 +83,14 @@ def epochs_completed(project, model, size):
     created when training STARTS, and best.pt is rewritten every time the
     model improves, so both exist mid-run.
     """
-    p = os.path.join(run_dir(project, model, size), "results.csv")
+    p = os.path.join(run_dir(project, model, size, tag), "results.csv")
     if not os.path.isfile(p):
         return 0
     with open(p, encoding="utf-8") as fh:
         return sum(1 for r in csv.DictReader(fh) if any(v.strip() for v in r.values()))
 
 
-def trained_weights(project, model, size, want_epochs):
+def trained_weights(project, model, size, want_epochs, tag=""):
     """best.pt for this size, but ONLY if the run reached want_epochs.
 
     Resume must key off persistent storage, not the results CSV: on Colab the
@@ -93,8 +99,8 @@ def trained_weights(project, model, size, want_epochs):
     for hours; an INCOMPLETE one must be retrained, not silently recorded as
     if it had finished.
     """
-    done = epochs_completed(project, model, size)
-    w = os.path.join(run_dir(project, model, size), "weights", "best.pt")
+    done = epochs_completed(project, model, size, tag)
+    w = os.path.join(run_dir(project, model, size, tag), "weights", "best.pt")
     if not os.path.isfile(w):
         return None, done
     return (w if done >= want_epochs else None), done
@@ -109,6 +115,15 @@ def main():
     ap.add_argument("--epochs", type=int, default=30)
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--optimizer", default="AdamW")
+    ap.add_argument("--lr0", type=float, default=None,
+                    help="explicit learning rate, overriding the tuned/default "
+                         "value. Needed for the child re-run: child was never "
+                         "tuned, so it defaulted to lr0=0.01, which Phase 3b "
+                         "showed costs it ~0.05 mAP50-95 vs the correct 0.002.")
+    ap.add_argument("--tag", default="",
+                    help="suffix for the results file and run names, so a "
+                         "re-run under different settings cannot overwrite or "
+                         "be skipped by an earlier one (e.g. --tag lr002)")
     ap.add_argument("--weights", default="yolov8n.pt")
     ap.add_argument("--project", default=None,
                     help="output root; use mounted Drive on Colab")
@@ -122,7 +137,8 @@ def main():
     from ultralytics import YOLO
 
     os.makedirs(RESULTS_DIR, exist_ok=True)
-    out_csv = os.path.join(RESULTS_DIR, f"ablation_imgsz_{args.model}.csv")
+    suffix = f"_{args.tag}" if args.tag else ""
+    out_csv = os.path.join(RESULTS_DIR, f"ablation_imgsz_{args.model}{suffix}.csv")
     already = done_sizes(out_csv)
     if args.project:  # recover the table from Drive if the repo copy was wiped
         mirror = os.path.join(args.project, os.path.basename(out_csv))
@@ -131,8 +147,17 @@ def main():
             already = done_sizes(out_csv)
             print(f"[{args.model}] restored results table from {mirror}")
     tuned = load_tuned(args.model)
+    train_kwargs = dict(tuned)
+    if args.lr0 is not None:
+        train_kwargs["lr0"] = args.lr0
+    # what actually reaches the optimizer — the value that must be reported
+    eff_lr0 = train_kwargs.get("lr0", "default")
     print(f"[{args.model}] hyperparameters held fixed: "
           f"{tuned if tuned else 'ultralytics defaults (never tuned)'}")
+    print(f"[{args.model}] effective lr0: {eff_lr0}"
+          f"{'  (overridden via --lr0)' if args.lr0 is not None else ''}")
+    if args.tag:
+        print(f"[{args.model}] tag: {args.tag} -> {out_csv}")
     if already:
         print(f"[{args.model}] skipping already-done sizes: {sorted(already)}")
 
@@ -147,9 +172,9 @@ def main():
         if size in already:
             what = "skip (already in results table)"
         else:
-            w, done = trained_weights(args.project, args.model, size, args.epochs)
+            w, done = trained_weights(args.project, args.model, size, args.epochs, args.tag)
             last = os.path.isfile(os.path.join(
-                run_dir(args.project, args.model, size), "weights", "last.pt"))
+                run_dir(args.project, args.model, size, args.tag), "weights", "last.pt"))
             if w:
                 what = f"validate only ({done}/{args.epochs} epochs done)"
             elif done and last:
@@ -163,7 +188,7 @@ def main():
         print(f"[{args.model}] NOTE: {plan_retrain} size(s) will train from "
               f"scratch. If you expected a resume, stop now and check "
               f"--project points at the dir holding "
-              f"ablation_imgsz_{args.model}_<size>/weights/.")
+              f"{run_name(args.model, '<size>', args.tag)}/weights/.")
     print()
 
     for size in args.sizes:
@@ -172,7 +197,7 @@ def main():
         print(f"\n[{args.model}] === imgsz={size} ===")
 
         recovered, done_ep = trained_weights(args.project, args.model, size,
-                                             args.epochs)
+                                             args.epochs, args.tag)
         if recovered:
             # Complete run from a previous session: don't burn hours redoing it
             # just because the results CSV was on ephemeral storage.
@@ -181,8 +206,9 @@ def main():
             model = YOLO(recovered)
             train_min = ""          # not recoverable after the fact
         else:
-            last = os.path.join(run_dir(args.project, args.model, size),
-                                "weights", "last.pt")
+            last = os.path.join(
+                run_dir(args.project, args.model, size, args.tag),
+                "weights", "last.pt")
             if done_ep and os.path.isfile(last):
                 # Continue the interrupted run instead of paying for the epochs
                 # it already did. Pass the checkpoint PATH, not resume=True:
@@ -203,9 +229,9 @@ def main():
                 t0 = time.time()
                 model.train(data=args.data, imgsz=size, epochs=args.epochs,
                             batch=args.batch, optimizer=args.optimizer,
-                            name=f"ablation_imgsz_{args.model}_{size}",
+                            name=run_name(args.model, size, args.tag),
                             project=args.project, plots=False,
-                            exist_ok=True, **tuned)
+                            exist_ok=True, **train_kwargs)
                 train_min = round((time.time() - t0) / 60, 2)
         m = model.val(data=args.data, imgsz=size)
         # inference ms/image — resolution's real cost, needed for the
@@ -215,7 +241,7 @@ def main():
         row = {
             "model": args.model, "imgsz": size, "epochs": args.epochs,
             "optimizer": args.optimizer,
-            "lr0": tuned.get("lr0", "default"), "box": tuned.get("box", "default"),
+            "lr0": eff_lr0, "box": tuned.get("box", "default"),
             "cls": tuned.get("cls", "default"), "dfl": tuned.get("dfl", "default"),
             "precision": round(float(m.box.mp), 5),
             "recall": round(float(m.box.mr), 5),
