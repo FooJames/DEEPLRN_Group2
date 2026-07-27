@@ -8,8 +8,8 @@ Distinct from `PROGRESS.md`, which is a session-by-session work log. This
 file is organised for the write-up: what we ran, what we got, and what we
 can honestly claim.
 
-**Status:** Phases 0–3a complete. Phase 3b (optimizer) not started.
-Phases 3c/4/5 blocked — see [Open Items](#7-open-items-and-blockers).
+**Status:** Phases 0–3b complete.
+Phases 3c/4/5 blocked — see [Open Items](#8-open-items-and-blockers).
 
 ---
 
@@ -249,15 +249,117 @@ last row gives.
 
 ---
 
-## 6. Cross-phase summary
+## 6. Phase 3b — Optimizer ablation
 
-| Configuration | imgsz | Epochs | mAP50 | mAP50-95 |
-|---|---|---|---|---|
-| **Child** baseline (auto, default hp) | 640 | 100 | 0.9469 | 0.8271 |
-| Child ablation best (AdamW, default hp) | 640 | 30 | 0.9338 | 0.7561 |
-| **Hazard** baseline (auto, default hp) | 640 | 100 | 0.5657 | 0.4072 |
-| Hazard tuned (AdamW, tuned hp) | 640 | 20 | 0.5020 | 0.3641 |
-| Hazard ablation best (AdamW, tuned hp) | 640 | 30 | 0.5259 | 0.3865 |
+SGD / Adam / AdamW at `imgsz=640` (the Phase 3a winner), 30 epochs, loss
+weights held fixed. Verified via `args.yaml` that only the optimizer and
+its learning rate differed.
+
+### 6.1 Design: each optimizer gets its own learning rate
+
+Holding a single `lr0` across optimizers appears fair but is not — it
+measures which optimizer happens to suit that one rate. Our Phase 2 sweep
+quantifies how large that effect is: **the same optimizer (AdamW) scores
+0.2325 mAP50 at `lr0=0.01` and 0.5020 at `lr0=8.8e-4`** — a 2× swing from
+the learning rate alone. Ultralytics itself follows this convention, with
+`optimizer='auto'` selecting `(SGD, 0.01)` or `(AdamW, 0.002×5/(4+nc))`.
+
+Rates used:
+
+| | SGD | Adam / AdamW |
+|---|---|---|
+| Hazard | 0.01 | 8.8e-4 (Phase 2 tuned) |
+| Child | 0.01 | 0.002 (ultralytics auto formula, nc=1) |
+
+**The unit of comparison is therefore "optimizer + the learning rate
+appropriate to it", not a pure single-variable change.** This must be
+stated in the write-up. It also means SGD is being compared at a generic
+default rate against adaptive optimizers at a tuned or dataset-derived
+rate — so a loss by SGD should not be read as "SGD is inherently worse".
+
+### 6.2 Hazard (tuned loss weights)
+
+| Optimizer | lr0 | Precision | Recall | mAP50 | mAP50-95 |
+|---|---|---|---|---|---|
+| SGD | 0.01 | 0.661 | 0.482 | 0.5130 | 0.3680 |
+| Adam | 8.8e-4 | 0.691 | 0.471 | 0.5181 | 0.3814 |
+| **AdamW** | 8.8e-4 | 0.714 | 0.459 | **0.5259** | **0.3865** |
+
+### 6.3 Child (default loss weights)
+
+| Optimizer | lr0 | Precision | Recall | mAP50 | mAP50-95 |
+|---|---|---|---|---|---|
+| SGD | 0.01 | 0.905 | 0.919 | 0.9509 | **0.8196** |
+| Adam | 0.002 | 0.948 | 0.893 | 0.9528 | 0.8028 |
+| **AdamW** | 0.002 | 0.932 | 0.905 | **0.9547** | 0.8059 |
+
+### 6.4 Findings
+
+**AdamW is selected for Phase 4.** It wins both metrics on the hazard
+detector and mAP50 on the child detector. Child mAP50-95 is the one
+exception, where SGD leads by 0.014 — worth reporting rather than omitting.
+AdamW is also the optimizer under which the Phase 2 hyperparameters were
+tuned, so carrying it forward keeps the final configuration internally
+consistent.
+
+**Differences between optimizers are small.** Spreads are 0.013 (hazard
+mAP50), 0.018 (hazard mAP50-95), 0.004 (child mAP50) and 0.017 (child
+mAP50-95). See the variance caveat below before treating these as decisive.
+
+**Reproducibility confirmed, but variance is unmeasured.** Ultralytics runs
+with `seed=0, deterministic=True` by default. The Phase 3b AdamW hazard run
+reproduced the Phase 3a `imgsz=640` result **exactly** (0.52592 / 0.38645 to
+five decimal places), confirming the pipeline is deterministic and the two
+ablations are mutually consistent. However, this also means **every result
+in this report is a single seed, and no run-to-run variance estimate
+exists.** Differences on the order of 0.01–0.02 mAP cannot presently be
+distinguished from seed noise. Repeating one configuration across 3 seeds
+would be the cheapest way to establish an error bar; without it, the
+optimizer ranking should be described as "AdamW was best or tied-best in
+every comparison" rather than as a statistically significant result.
+
+### 6.5 Incidental finding: the child detector was undertrained in Phase 3a
+
+The child detector was never tuned, so the Phase 3a resolution ablation ran
+it at ultralytics' default `lr0 = 0.01` under AdamW. Phase 3b used the
+auto-derived rate for a single-class dataset, `lr0 = 0.002`. With
+everything else identical (AdamW, `imgsz=640`, 30 epochs):
+
+| Child, AdamW @640, 30 ep | mAP50 | mAP50-95 |
+|---|---|---|
+| `lr0 = 0.01` (Phase 3a) | 0.9338 | 0.7561 |
+| `lr0 = 0.002` (Phase 3b) | **0.9547** | **0.8059** |
+| Difference | **+0.0209** | **+0.0498** |
+
+**Implication for Phase 3a.** The child resolution ablation was internally
+consistent — all three resolutions used the same `lr0 = 0.01` — so its
+*relative* ranking is not invalid. But it was conducted at a handicapped
+operating point, and the resolution ranking has not been confirmed at the
+correct learning rate. Re-running the child resolution ablation at
+`lr0 = 0.002` (~2 h) would remove this caveat. Until then, the child
+`imgsz=640` conclusion should be reported with this qualification. The
+hazard resolution ablation is unaffected, as it used the tuned rate
+throughout.
+
+**A note on epoch budget.** At the correct learning rate the child detector
+reaches mAP50 0.9547 in 30 epochs, *exceeding* its own 100-epoch baseline
+of 0.9469, while mAP50-95 (0.8059) remains below the baseline's 0.8271.
+mAP50 saturates early; localisation precision continues improving with
+longer training.
+
+---
+
+## 7. Cross-phase summary
+
+| Configuration | Optimizer | lr0 | imgsz | Epochs | mAP50 | mAP50-95 |
+|---|---|---|---|---|---|---|
+| **Child** baseline | auto→AdamW | 0.002 | 640 | 100 | 0.9469 | 0.8271 |
+| Child, Phase 3a | AdamW | 0.01 | 640 | 30 | 0.9338 | 0.7561 |
+| **Child, best to date** | AdamW | 0.002 | 640 | 30 | **0.9547** | 0.8059 |
+| Child, best mAP50-95 | SGD | 0.01 | 640 | 30 | 0.9509 | **0.8196** |
+| **Hazard** baseline | auto→AdamW | 6.25e-4 | 640 | 100 | 0.5657 | 0.4072 |
+| Hazard, Phase 2 tuned | AdamW | 8.8e-4 | 640 | 20 | 0.5020 | 0.3641 |
+| **Hazard, best to date** | AdamW | 8.8e-4 | 640 | 30 | **0.5259** | **0.3865** |
 
 **Note on comparing these rows:** the 100-epoch baselines are not directly
 comparable to the 20/30-epoch tuning and ablation runs — epoch budget
@@ -265,11 +367,17 @@ differs. The tuned configuration has not yet been trained at full length;
 that happens in Phase 4, which is the run that determines whether tuning
 improves the final model.
 
+**Configuration selected for Phase 4:** YOLOv8n, `imgsz=640`, **AdamW**;
+hazard with the Phase 2 tuned hyperparameters (`lr0=8.8e-4, box=8.14272,
+cls=0.75027, dfl=1.05913`), child with `lr0=0.002` and default loss
+weights. Full epoch budget (100), with the caveat that the hazard detector
+plateaus near epoch 50.
+
 ---
 
-## 7. Open items and blockers
+## 8. Open items and blockers
 
-### 7.1 Blocking: the fusion evaluation set does not yet exist
+### 8.1 Blocking: the fusion evaluation set does not yet exist
 
 **This blocks Phases 3c, 4 (threshold calibration), and 5 (risk accuracy)
 — i.e. the project's headline contribution.**
@@ -289,7 +397,7 @@ suggestion disagrees with the assigned label on **273 of 279** unsafe rows.
 **The missing class is "child and hazard both present but far apart =
 safe" — currently zero examples.** Manual review of the 24 highest-distance
 flagged images found only one genuine far-apart scene; the other seven
-(each ×3 augmentations) were the centroid artefact described in §7.2.
+(each ×3 augmentations) were the centroid artefact described in §8.2.
 
 Options: (a) composite far-apart co-occurrence frames from the existing
 hazard and child datasets, giving exact ground-truth distances by
@@ -297,7 +405,7 @@ construction; (b) source real far-apart images; (c) abandon the proximity
 claim and report co-occurrence accuracy instead, which forfeits the
 contribution.
 
-### 7.2 Supporting evidence for the centroid-vs-edge ablation
+### 8.2 Supporting evidence for the centroid-vs-edge ablation
 
 Manual inspection produced a concrete motivating example, independent of
 any model: in several images a child is bent directly over a small hazard
@@ -307,7 +415,7 @@ third of the frame, **centroid-to-centroid distance reads ≈ 0.4
 correctly read these as close. This is qualitative support for the
 hypothesis behind ablation 3c, and can be used as a figure.
 
-### 7.3 Additional known limitations
+### 8.3 Additional known limitations
 
 - **Evaluation-set composition.** The co-occurrence set contains only 3 of
   the 12 hazard classes (Knife, Scissors, Coin) and is coin-dominated, so
@@ -332,13 +440,15 @@ hypothesis behind ablation 3c, and can be used as a figure.
   winner. This assumes no strong interactions and should be stated as a
   simplification rather than presented as an orthogonal search.
 
-### 7.4 Remaining work
+### 8.4 Remaining work
 
 | Phase | Status | Note |
 |---|---|---|
-| 3b Optimizer ablation | Not started | SGD vs Adam vs AdamW at `imgsz=640`. **Must use per-optimizer learning rates** — reusing the AdamW-tuned `lr0=8.8e-4` for SGD would confound the comparison. |
-| 3c Distance reference | **Blocked** | Needs §7.1 resolved. |
+| 3b Optimizer ablation | **Done** | AdamW selected. See §6. |
+| — Child 3a re-run at `lr0=0.002` | Recommended | ~2 h. Confirms the child resolution ranking at the correct learning rate (see §6.5). |
+| — Seed variance | Recommended | All results are single-seed (`seed=0`, deterministic). 3 seeds on one config would give an error bar (see §6.4). |
+| 3c Distance reference | **Blocked** | Needs §8.1 resolved. |
 | 4 Final models + fusion | Partly blocked | Detector retraining can proceed; threshold calibration cannot. |
-| 5 Evaluation | Blocked | Risk accuracy needs §7.1. Test split still untouched. |
+| 5 Evaluation | Blocked | Risk accuracy needs §8.1. Test split still untouched. |
 | — Per-class regeneration | Pending | Regenerate §3.1 under pinned 8.4.106. |
 | — Computational cost | Partly done | `infer_ms` collected per resolution; still need two-model-vs-one pipeline comparison. |
