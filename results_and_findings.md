@@ -482,10 +482,26 @@ hypothesis behind ablation 3c, and can be used as a figure.
   while ours is YOLOv8**n**; the numbers are not directly comparable. A
   controlled test would require training a unified model on the union of
   our two datasets as an internal baseline.
-- **Greedy search ordering.** Hyperparameters were tuned first, then
-  resolution, then optimizer — each conditioned on the previous stage's
-  winner. This assumes no strong interactions and should be stated as a
-  simplification rather than presented as an orthogonal search.
+- **Greedy search ordering — known to be imperfect, with a worked example.**
+  Hyperparameters were tuned first, then resolution, then optimizer, each
+  conditioned on the previous stage's winner. This assumes the choices are
+  approximately independent, and §5.2b shows they are not: the child
+  resolution ranking inverted once the learning rate was corrected. This
+  should be presented as a deliberate simplification made for compute
+  reasons, not as an orthogonal search.
+
+  **Specifically, the hazard resolution ablation (§5.1) was run before the
+  optimizer ablation (§6) confirmed AdamW, so it inherits the same
+  ordering assumption that demonstrably failed for the child detector.**
+  It is not affected by the *particular* fault that broke the child run —
+  hazard used its Phase 2 tuned learning rate throughout, rather than an
+  untuned default — so there is no known error in it. But its `imgsz=640`
+  result is strictly conditional on AdamW at `lr0=8.8e-4`, and it has not
+  been confirmed under any other optimizer. Re-running it (~2.5 h) was
+  considered and deliberately not done, given the compute budget and the
+  absence of a specific reason to doubt the result. Readers should treat
+  the hazard resolution choice as validated under the final configuration
+  only, not as optimizer-independent.
 
 ### 8.4 Remaining work
 
