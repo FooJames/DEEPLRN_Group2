@@ -8,7 +8,7 @@ Distinct from `PROGRESS.md`, which is a session-by-session work log. This
 file is organised for the write-up: what we ran, what we got, and what we
 can honestly claim.
 
-**Status:** Phases 0–3b complete.
+**Status:** Phases 0–3b complete (child resolution ablation re-run and corrected).
 Phases 3c/4/5 blocked — see [Open Items](#8-open-items-and-blockers).
 
 ---
@@ -210,18 +210,61 @@ via each run's `args.yaml` that only `imgsz` differed within a model.
 | **640** | 0.714 | 0.459 | **0.5259** | **0.3865** | 45.7 | 3.90 |
 | 832 | 0.577 | 0.474 | 0.5003 | 0.3521 | 71.8 | 6.30 |
 
-### 5.2 Child (default hyperparameters)
+### 5.2 Child — first attempt at `lr0=0.01` (SUPERSEDED)
+
+> **This table is retained for the record but its conclusion does not hold.**
+> The child detector was never tuned, so this ran at ultralytics' default
+> `lr0=0.01`, which Phase 3b showed is wrong for AdamW on this dataset. The
+> corrected run is §5.2b, and it **reverses the ranking**.
 
 | imgsz | Precision | Recall | mAP50 | mAP50-95 | Train (min) | Inference (ms) |
 |---|---|---|---|---|---|---|
-| 416 | 0.944 | 0.817 | 0.9209 | 0.7451 | 27.2 | **3.17** |
-| **640** | 0.908 | 0.842 | **0.9338** | **0.7561** | 40.5 | 4.39 |
+| 416 | 0.944 | 0.817 | 0.9209 | 0.7451 | 27.2 | 3.17 |
+| 640 | 0.908 | 0.842 | 0.9338 | 0.7561 | 40.5 | 4.39 |
 | 832 | 0.915 | 0.824 | 0.9150 | 0.7225 | 63.3 | 6.88 |
+
+### 5.2b Child — corrected at `lr0=0.002` (authoritative)
+
+Identical in every respect except the learning rate, which is the
+auto-derived rate for a single-class dataset.
+
+| imgsz | Precision | Recall | mAP50 | mAP50-95 | Train (min) | Inference (ms) |
+|---|---|---|---|---|---|---|
+| **416** | 0.948 | 0.889 | **0.9626** | **0.8127** | **27.6** | **2.48** |
+| 640 | 0.932 | 0.905 | 0.9547 | 0.8059 | 41.0 | 4.89 |
+| 832 | 0.915 | 0.897 | 0.9504 | 0.7936 | 63.8 | 6.94 |
+
+Every resolution improved at the corrected rate (+0.021 to +0.042 mAP50,
++0.050 to +0.071 mAP50-95), and **the ranking inverted: 416 now wins both
+metrics**, having placed last on mAP50 at the wrong rate.
 
 ### 5.3 Findings
 
-**640 is optimal for both detectors** on both metrics. → **`imgsz=640`
-is locked for Phase 3b and Phase 4.**
+**The optimal resolution differs per detector:**
+
+| Detector | Optimal imgsz | mAP50 | mAP50-95 |
+|---|---|---|---|
+| Child | **416** | 0.9626 | 0.8127 |
+| Hazard | **640** | 0.5259 | 0.3865 |
+
+This is legitimate — the two detectors are trained and deployed
+independently, so they need not share an input resolution. It is also a
+result that could not have been found by ablating only one model.
+
+**For the child detector, 416 wins on accuracy *and* cost.** It is the most
+accurate configuration while training in 27.6 min (vs 41.0) and running
+inference in 2.48 ms (vs 4.89) — **1.97× faster than 640**. A single-class
+detection task on reasonably large subjects evidently does not need the
+extra resolution.
+
+**Methodological finding — a sequential ablation can invert.** The child
+resolution ranking at `lr0=0.01` (640 best) is the opposite of the ranking
+at `lr0=0.002` (416 best). The greedy ordering used here — tune, then
+resolution, then optimizer — assumes these choices are approximately
+independent, and this is direct evidence that they are not. The practical
+lesson, worth stating in the write-up, is that an ablation conditioned on
+an untuned hyperparameter can produce a confidently wrong answer; the
+resolution result was only trustworthy once the learning rate was correct.
 
 **Higher resolution actively hurts.** 832 was worse than 640 on both
 models by a near-identical margin (hazard −0.0344, child −0.0336
@@ -236,8 +279,9 @@ somewhat understated.
 416 matches 640 on mAP50-95 to within **0.0003** (mAP50 is 0.014 lower)
 while running **1.72× faster** at inference. For a real-time monitoring
 application this is a meaningful trade, and it supports the computational
-cost analysis promised in the proposal's introduction. 640 remains the
-accuracy-optimal choice; 416 is the efficiency option.
+cost analysis promised in the proposal's introduction. For hazard, 640
+remains accuracy-optimal and 416 is the efficiency option; for child, 416
+is simply better on both counts (§5.2b).
 
 **Run-integrity note.** The hazard 832 run was interrupted at epoch 21 and
 auto-resumed from checkpoint. It was verified to be a genuine continuous
@@ -331,15 +375,13 @@ everything else identical (AdamW, `imgsz=640`, 30 epochs):
 | `lr0 = 0.002` (Phase 3b) | **0.9547** | **0.8059** |
 | Difference | **+0.0209** | **+0.0498** |
 
-**Implication for Phase 3a.** The child resolution ablation was internally
-consistent — all three resolutions used the same `lr0 = 0.01` — so its
-*relative* ranking is not invalid. But it was conducted at a handicapped
-operating point, and the resolution ranking has not been confirmed at the
-correct learning rate. Re-running the child resolution ablation at
-`lr0 = 0.002` (~2 h) would remove this caveat. Until then, the child
-`imgsz=640` conclusion should be reported with this qualification. The
-hazard resolution ablation is unaffected, as it used the tuned rate
-throughout.
+**Implication for Phase 3a — the re-run was performed, and it overturned
+the result.** The child resolution ablation was repeated at `lr0 = 0.002`
+(§5.2b). Every resolution improved, and the ranking inverted: 416, which
+had placed last on mAP50 at the wrong rate, wins both metrics at the
+correct one. The original child `imgsz=640` conclusion is therefore
+superseded. The hazard resolution ablation is unaffected, as it used the
+tuned rate throughout.
 
 **A note on epoch budget.** At the correct learning rate the child detector
 reaches mAP50 0.9547 in 30 epochs, *exceeding* its own 100-epoch baseline
@@ -355,7 +397,8 @@ longer training.
 |---|---|---|---|---|---|---|
 | **Child** baseline | auto→AdamW | 0.002 | 640 | 100 | 0.9469 | 0.8271 |
 | Child, Phase 3a | AdamW | 0.01 | 640 | 30 | 0.9338 | 0.7561 |
-| **Child, best to date** | AdamW | 0.002 | 640 | 30 | **0.9547** | 0.8059 |
+| Child, Phase 3b @640 | AdamW | 0.002 | 640 | 30 | 0.9547 | 0.8059 |
+| **Child, best to date** | AdamW | 0.002 | **416** | 30 | **0.9626** | **0.8127** |
 | Child, best mAP50-95 | SGD | 0.01 | 640 | 30 | 0.9509 | **0.8196** |
 | **Hazard** baseline | auto→AdamW | 6.25e-4 | 640 | 100 | 0.5657 | 0.4072 |
 | Hazard, Phase 2 tuned | AdamW | 8.8e-4 | 640 | 20 | 0.5020 | 0.3641 |
@@ -367,11 +410,15 @@ differs. The tuned configuration has not yet been trained at full length;
 that happens in Phase 4, which is the run that determines whether tuning
 improves the final model.
 
-**Configuration selected for Phase 4:** YOLOv8n, `imgsz=640`, **AdamW**;
-hazard with the Phase 2 tuned hyperparameters (`lr0=8.8e-4, box=8.14272,
-cls=0.75027, dfl=1.05913`), child with `lr0=0.002` and default loss
-weights. Full epoch budget (100), with the caveat that the hazard detector
-plateaus near epoch 50.
+**Configuration selected for Phase 4:** YOLOv8n, **AdamW**, full epoch
+budget (100), with the caveat that the hazard detector plateaus near
+epoch 50. The two detectors use **different input resolutions**, which is
+legitimate given they are trained and deployed independently:
+
+| | imgsz | lr0 | box / cls / dfl |
+|---|---|---|---|
+| Child | **416** | 0.002 | defaults (7.5 / 0.5 / 1.5) |
+| Hazard | **640** | 8.8e-4 | 8.14272 / 0.75027 / 1.05913 |
 
 ---
 
@@ -445,7 +492,7 @@ hypothesis behind ablation 3c, and can be used as a figure.
 | Phase | Status | Note |
 |---|---|---|
 | 3b Optimizer ablation | **Done** | AdamW selected. See §6. |
-| — Child 3a re-run at `lr0=0.002` | Recommended | ~2 h. Confirms the child resolution ranking at the correct learning rate (see §6.5). |
+| — Child 3a re-run at `lr0=0.002` | **Done** | Ranking inverted: 416 beats 640. See §5.2b. |
 | — Seed variance | Recommended | All results are single-seed (`seed=0`, deterministic). 3 seeds on one config would give an error bar (see §6.4). |
 | 3c Distance reference | **Blocked** | Needs §8.1 resolved. |
 | 4 Final models + fusion | Partly blocked | Detector retraining can proceed; threshold calibration cannot. |

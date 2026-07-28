@@ -1,0 +1,4 @@
+model,imgsz,epochs,optimizer,lr0,box,cls,dfl,precision,recall,mAP50,mAP50_95,train_min,infer_ms
+child,416,30,AdamW,0.002,default,default,default,0.94785,0.88889,0.9626,0.81267,27.59,2.477
+child,640,30,AdamW,0.002,default,default,default,0.93151,0.90505,0.95473,0.80589,41.03,4.886
+child,832,30,AdamW,0.002,default,default,default,0.91527,0.89697,0.95043,0.7936,63.75,6.937
