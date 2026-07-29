@@ -9,7 +9,7 @@ file is organised for the write-up: what we ran, what we got, and what we
 can honestly claim.
 
 **Status:** Phases 0–3b complete (child resolution ablation re-run and corrected).
-Phases 3c/4/5 blocked — see [Open Items](#8-open-items-and-blockers).
+Phase 4a (detector retraining) and 3c are now unblocked — see [Open Items](#8-open-items-and-blockers).
 
 ---
 
@@ -87,6 +87,55 @@ only and cannot seed the normalised threshold.
   `path:` (`scripts/fix_data_yaml.py`). Must be re-run after every fresh
   download, including on Colab.
 
+- **Train/val/test leakage in the child dataset (measured).** Roboflow
+  filenames encode the source image (`<source>_jpg.rf.<hash>.jpg`), which
+  makes cross-split duplication checkable. 386 source names span the train
+  and val/test boundary; verifying by pixel comparison (mean absolute
+  difference over resized images, threshold 15) confirms **~17 % of the
+  validation split and ~21 % of the test split are near-duplicates of
+  training images** — one train/val pair differs by 0.42, i.e. effectively
+  the same photograph.
+
+  The effect on reported performance was measured rather than assumed, by
+  re-evaluating the baseline weights on a decontaminated subset:
+
+  | Child baseline weights | mAP50 | mAP50-95 |
+  |---|---|---|
+  | Full val split (372 images) | 0.9548 | 0.8526 |
+  | **Clean subset (313 images, duplicates removed)** | **0.9465** | **0.8321** |
+  | Inflation attributable to leakage | +0.008 | +0.021 |
+
+  So the leakage is real but its practical effect is small: under one point
+  of mAP50 and about two of mAP50-95. Detecting the single class "child" is
+  visually redundant enough that memorisation adds little. **The child
+  detector's conclusions are therefore robust to this contamination**, and
+  the dataset was retained rather than re-split — re-splitting would also
+  have violated the project constraint to keep each creator's original
+  split. Both figures should be quoted in the paper. (Both rows come from
+  the same local run on ultralytics 8.3.130, so the *difference* is valid
+  even though the absolute values sit slightly above the 8.4.106 baseline
+  in §3.)
+
+  **The hazard dataset is clean** — 3,863 unique sources across 5,917
+  images and zero cross-split duplication.
+
+- **Low source diversity in the child dataset — arguably the more serious
+  limitation.** The 4,705 child images derive from only **~649 unique
+  source photographs** (~7 copies each, from resizing plus the
+  salt-and-pepper augmentation Roboflow applied). The effective visual
+  diversity is therefore an order of magnitude below what the image count
+  suggests, which bounds how strongly generalisation can be claimed —
+  independently of, and more consequentially than, the leakage above. The
+  hazard dataset is far better in this respect (3,863 sources for 5,917
+  images, ~1.5 copies each).
+
+- **Not a defect: the speckling visible in child images.** Roboflow applied
+  *salt-and-pepper noise to 5 % of pixels* as the child dataset's
+  augmentation (documented in its `README.roboflow.txt`), and both datasets
+  were stretched to 640x640. Images that appear heavily blacked out on
+  inspection are, on checking, genuinely dark photographs rather than
+  corrupted data.
+
 ---
 
 ## 3. Phase 1 — Baseline training
@@ -97,6 +146,13 @@ only and cannot seed the normalised threshold.
 |---|---|---|
 | Child (1 class) | **0.9469** | 0.8271 |
 | Hazard (12 class) | **0.5657** | 0.4072 |
+
+> **Read the child figure alongside §2.2.** The child validation split
+> contains ~17 % near-duplicates of training images. Re-evaluating the same
+> weights on a decontaminated subset gives **0.9465 mAP50 / 0.8321
+> mAP50-95**, i.e. the leakage is worth about +0.008 / +0.021. The child
+> result stands, but the clean figure is the honest generalisation estimate
+> and should be quoted next to it. The hazard split is uncontaminated.
 
 **Finding — `optimizer='auto'` is not a neutral default.** Ultralytics'
 `auto` mode explicitly discards any supplied `lr0` and hard-codes AdamW
@@ -424,33 +480,80 @@ legitimate given they are trained and deployed independently:
 
 ## 8. Open items and blockers
 
-### 8.1 Blocking: the fusion evaluation set does not yet exist
+### 8.1 The fusion evaluation set (resolved by construction)
 
-**This blocks Phases 3c, 4 (threshold calibration), and 5 (risk accuracy)
-— i.e. the project's headline contribution.**
+**Original problem.** The first labelled set could not test the fusion
+layer. Every "safe" image contained NO hazard, so the label tracked hazard
+*presence* rather than proximity: a threshold calibrated on it degenerates
+to "hazard detected → unsafe", and the distance rule — the actual
+contribution — becomes untestable. The distance rule's own suggestion
+disagreed with the assigned label on **273 of 279** unsafe rows. The
+missing class, "child and hazard both present but far apart = safe", had
+**zero** examples. That set also contained only 3 of the 12 hazard classes,
+was coin-dominated, and its 279 rows were 3x-augmented copies of just 93
+unique scenes.
 
-The current labelled set (379 images: 279 "unsafe", 100 "safe") assigns
-its label by **hazard presence**, not proximity:
+**Resolution.** `scripts/make_cooccurrence_eval.py` composites the missing
+case: a hazard crop is pasted onto a real child image at a controlled
+separation, so the geometry is exact by construction.
 
-- every "unsafe" image is a child *with* a hazard, regardless of distance
-- every "safe" image is a child *with no hazard at all* (no distance exists)
+| | Original set | Composited set |
+|---|---|---|
+| Unsafe scenes | 93 | 98 |
+| **Far-apart safe scenes** | **0** | **102** |
+| Hazard classes covered | 3 of 12 | **12 of 12** |
+| Unique source children | ~100 | 191 |
+| Splits | none | val 120 / test 80, grouped by child |
 
-Consequently a distance threshold calibrated on this set degenerates to
-"any hazard detected → unsafe" — the optimal threshold simply sits above
-the maximum observed distance (0.48), and the proximity signal, which is
-the actual contribution, becomes untestable. The distance rule's own
-suggestion disagrees with the assigned label on **273 of 279** unsafe rows.
+**The ground truth is deliberately not either metric under test.** Phase 3c
+compares centroid distance against nearest-edge distance, both normalised
+by the image diagonal. Deriving the label from either would make that
+predictor win by construction. The label instead uses **reachability**,
+measured in units of the child's own body size:
 
-**The missing class is "child and hazard both present but far apart =
-safe" — currently zero examples.** Manual review of the 24 highest-distance
-flagged images found only one genuine far-apart scene; the other seven
-(each ×3 augmentations) were the centroid artefact described in §8.2.
+```
+reach_ratio = (edge gap between boxes) / (child box height)
+unsafe  <=>  reach_ratio <= 0.5          (roughly arm's length)
+```
 
-Options: (a) composite far-apart co-occurrence frames from the existing
-hazard and child datasets, giving exact ground-truth distances by
-construction; (b) source real far-apart images; (c) abandon the proximity
-claim and report co-occurrence accuracy instead, which forfeits the
-contribution.
+This is scale-relative, while both predictors are diagonal-normalised, so
+neither recovers it automatically. Because the fusion rule takes the
+minimum over all child-hazard pairs, the ground truth is computed the same
+way — against the *closest* labelled child, not the one the hazard was
+placed around (17 of 60 images in testing had more than one labelled
+child, so this materially matters).
+
+Separation is sampled uniformly over `reach_ratio` in [0, 1.5] so the set
+brackets the decision boundary and contains genuinely ambiguous cases,
+rather than being trivially separable.
+
+**Oracle check (ground-truth boxes, not detector output).** Applying the
+best single threshold directly to the true geometry:
+
+| Predictor | Best achievable accuracy |
+|---|---|
+| `reach_ratio` (the label's own definition) | 1.000 — sanity check |
+| Centroid distance / diagonal | 0.660 |
+| **Nearest-edge distance / diagonal** | **0.855** |
+
+Both predictors sit well below 1.000 and the two classes overlap in each,
+confirming the benchmark is not a tautology. The 19.5-point advantage for
+edge distance is preliminary support for the Phase 3c hypothesis — but
+note these numbers use ground-truth boxes and therefore represent an
+upper bound. The actual ablation runs the trained detectors, so detection
+error will lower both.
+
+**Limitations to state in the write-up.**
+- Composited images test the pipeline's *mechanics* — detection plus
+  geometric fusion under known geometry. They do **not** establish that
+  proximity predicts real-world danger; that would require real images
+  with independent human judgement.
+- Pasted crops have visible boundaries and no lighting or perspective
+  matching, so they are easier to detect than naturally occurring hazards.
+- The reachability threshold (0.5 x child height) is a stated modelling
+  assumption, not a measured quantity.
+- The child dataset under-labels: frames containing several children often
+  annotate only one. Ground truth uses the labelled boxes only.
 
 ### 8.2 Supporting evidence for the centroid-vs-edge ablation
 
@@ -510,8 +613,8 @@ hypothesis behind ablation 3c, and can be used as a figure.
 | 3b Optimizer ablation | **Done** | AdamW selected. See §6. |
 | — Child 3a re-run at `lr0=0.002` | **Done** | Ranking inverted: 416 beats 640. See §5.2b. |
 | — Seed variance | Recommended | All results are single-seed (`seed=0`, deterministic). 3 seeds on one config would give an error bar (see §6.4). |
-| 3c Distance reference | **Blocked** | Needs §8.1 resolved. |
-| 4 Final models + fusion | Partly blocked | Detector retraining can proceed; threshold calibration cannot. |
-| 5 Evaluation | Blocked | Risk accuracy needs §8.1. Test split still untouched. |
+| 3c Distance reference | **Unblocked** | Eval set built (§8.1). Run after Phase 4a so it uses the final detectors. |
+| 4 Final models + fusion | **Unblocked** | 4a retrain now; 4b calibration runs together with 3c. |
+| 5 Evaluation | Ready after 3c | Both test splits (detector + co-occurrence) still untouched. |
 | — Per-class regeneration | Pending | Regenerate §3.1 under pinned 8.4.106. |
 | — Computational cost | Partly done | `infer_ms` collected per resolution; still need two-model-vs-one pipeline comparison. |
