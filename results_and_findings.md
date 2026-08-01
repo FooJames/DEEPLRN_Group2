@@ -228,9 +228,17 @@ question actually posed.
 
 ### 4.2 Findings
 
-**The tuned configuration beats the baseline at equal budget.** At 20
-epochs: mAP50 0.502 vs 0.464 (**+0.038**), mAP50-95 0.364 vs 0.324
-(**+0.040**).
+**A caution on comparing the tuned run to the baseline.** It is tempting to
+compare the tuned run's 20-epoch result (mAP50 0.502) against the baseline's
+epoch-20 checkpoint (0.464) and claim +0.038 "at equal budget". **That
+comparison is confounded and should not be used.** Ultralytics anneals the
+learning rate across the *scheduled* number of epochs, so at epoch 20 the
+baseline (a 100-epoch schedule) is still mid-decay at lr = 5.07e-4, while
+the tuning run (a 20-epoch schedule) has annealed to roughly 1 % of its lr0
+and is fully converged. The shorter run is favoured by the schedule alone,
+independently of its hyperparameters. A fair comparison requires training
+the tuned configuration for the same 100 epochs as the baseline, which is
+Phase 4.
 
 **`lr0` dominates the other three parameters by ~5×.** Reducing `lr0` from
 8.8e-3 to 8.8e-4 gained **+0.170** fitness. The entire spread of
@@ -247,8 +255,12 @@ noise and were not resolved.* A follow-up sweep with `lr0` narrowed to
 
 **The tuner essentially rediscovered the `auto` learning rate.** The
 winning `lr0 = 8.8e-4` is close to the 6.25e-4 that `optimizer=auto`
-already selects for a 12-class dataset. This should be stated plainly
-rather than presenting the tuning as a large win.
+already selects for a 12-class dataset. Combined with the schedule confound
+above, **there is currently no clean evidence that tuning improved on the
+default configuration**; Phase 4 (tuned config at the full 100 epochs
+against the 100-epoch baseline) is the first fair test. The defensible
+claim from Phase 2 is narrow: a learning rate near 1e-3 is required for
+AdamW on this dataset, and the loss weights were not resolved.
 
 ---
 
@@ -499,11 +511,22 @@ separation, so the geometry is exact by construction.
 
 | | Original set | Composited set |
 |---|---|---|
-| Unsafe scenes | 93 | 98 |
-| **Far-apart safe scenes** | **0** | **102** |
+| Unsafe scenes | 93 | 107 |
+| **Far-apart safe scenes** | **0** | **93** |
 | Hazard classes covered | 3 of 12 | **12 of 12** |
-| Unique source children | ~100 | 191 |
-| Splits | none | val 120 / test 80, grouped by child |
+| Splits | none | val 130 / test 70, grouped by source photo |
+
+**Background selection.** Child backgrounds are drawn only from the child
+dataset's **held-out splits**, so composites never reuse images the child
+detector trained on (§2.2). They are also **screened for salt-and-pepper
+noise**: the child export carries noise on 5 % of pixels while hazard crops
+carry none, so pasting a clean crop onto a speckled background would be
+visually inconsistent and would make the hazard easier to detect than it
+should be. Screening cuts the median composite noise level from 0.0037 to
+0.00001 and costs no source diversity, because every source photograph has
+at least one near-clean copy. Splits are grouped by **source photograph**
+rather than by file, so the duplication that contaminated the child dataset
+is not reproduced here (verified: zero sources span val and test).
 
 **The ground truth is deliberately not either metric under test.** Phase 3c
 compares centroid distance against nearest-edge distance, both normalised
@@ -533,11 +556,11 @@ best single threshold directly to the true geometry:
 | Predictor | Best achievable accuracy |
 |---|---|
 | `reach_ratio` (the label's own definition) | 1.000 — sanity check |
-| Centroid distance / diagonal | 0.660 |
-| **Nearest-edge distance / diagonal** | **0.855** |
+| Centroid distance / diagonal | 0.655 |
+| **Nearest-edge distance / diagonal** | **0.835** |
 
 Both predictors sit well below 1.000 and the two classes overlap in each,
-confirming the benchmark is not a tautology. The 19.5-point advantage for
+confirming the benchmark is not a tautology. The 18-point advantage for
 edge distance is preliminary support for the Phase 3c hypothesis — but
 note these numbers use ground-truth boxes and therefore represent an
 upper bound. The actual ablation runs the trained detectors, so detection
@@ -554,6 +577,14 @@ error will lower both.
   assumption, not a measured quantity.
 - The child dataset under-labels: frames containing several children often
   annotate only one. Ground truth uses the labelled boxes only.
+- **The reachability label is not a constant physical distance.** The child
+  dataset annotates a head/face in roughly 40 % of images and a full body in
+  57 % (median box aspect ratio 0.61, but the 10th-90th percentile range is
+  0.39-1.08). Because the label is defined relative to box *height*,
+  "arm's length" corresponds to a much smaller real-world distance for a
+  face box than a body box. `--max-aspect 0.7` restricts generation to
+  body-like boxes if a consistent physical scale is required; the current
+  set does not apply that restriction.
 
 ### 8.2 Supporting evidence for the centroid-vs-edge ablation
 

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-make_cooccurrence_eval.py — build the child+hazard evaluation set (§8.1).
+make_cooccurrence_eval.py -- build the child+hazard evaluation set (§8.1).
 
 The existing labelled set cannot test the fusion layer: every "safe" image
 has NO hazard, so the label tracks hazard *presence*, not proximity, and a
-distance threshold calibrated on it degenerates to "hazard detected →
+distance threshold calibrated on it degenerates to "hazard detected ->
 unsafe". What is missing is the case where a child and a hazard are BOTH
 present but far apart, i.e. safe.
 
@@ -13,14 +13,14 @@ at a controlled separation, so the geometry is exact by construction.
 
     python scripts/make_cooccurrence_eval.py --n 200
 
-GROUND TRUTH IS *NOT* THE METRIC UNDER TEST — this matters.
+GROUND TRUTH IS *NOT* THE METRIC UNDER TEST -- this matters.
     Phase 3c compares two candidate predictors: centroid-to-centroid
     distance and nearest-edge distance, both normalised by the image
     diagonal. If the label were derived from either one, that predictor
     would win by construction and the ablation would be a tautology.
 
     So the label uses an independent criterion: REACHABILITY, measured in
-    units of the child's own body size —
+    units of the child's own body size --
 
         reach_ratio = (edge gap between boxes) / (child box height)
         unsafe  <=>  reach_ratio <= --reach (default 0.5, ~arm's length)
@@ -39,10 +39,22 @@ be trivially separable and would prove nothing.
 SPLITS: grouped by source child image, so no child appears in both val and
 test. Calibrate on val; touch test once, at the end.
 
-LIMITATION TO STATE IN THE WRITE-UP: composited images test the pipeline's
-mechanics (detection + geometric fusion) under known geometry. They do not
-establish that proximity predicts real-world danger — that would need real
-images with independent human judgement.
+BACKGROUND SELECTION: child backgrounds are drawn only from the child
+dataset's HELD-OUT splits (so composites do not reuse images the child
+detector trained on) and are screened for salt-and-pepper noise, since the
+child export carries 5% noise while hazard crops carry none -- pasting a
+clean crop onto a speckled background would be visually inconsistent and
+would make the hazard easier to detect than it should be.
+
+LIMITATIONS TO STATE IN THE WRITE-UP:
+  - Composited images test the pipeline's mechanics (detection + geometric
+    fusion) under known geometry. They do not establish that proximity
+    predicts real-world danger -- that needs real images with independent
+    human judgement.
+  - The child dataset annotates a head/face in roughly 40% of images and a
+    full body in 57%. Because the reachability label is relative to box
+    height, "arm's length" is not a consistent physical distance across the
+    set. --max-aspect 0.7 restricts to body-like boxes if that matters.
 """
 
 import argparse
@@ -50,6 +62,7 @@ import csv
 import math
 import os
 import random
+import re
 
 SPLITS = ("train", "valid", "test")
 IMAGE_EXTS = {".jpg", ".jpeg", ".png"}
@@ -68,10 +81,10 @@ def load_boxes(label_path):
     return out
 
 
-def index_dataset(root):
-    """[(image_path, label_path)] across whichever splits exist."""
+def index_dataset(root, splits=SPLITS):
+    """[(image_path, label_path)] across the requested splits."""
     pairs = []
-    for sp in SPLITS:
+    for sp in splits:
         img_dir = os.path.join(root, sp, "images")
         lbl_dir = os.path.join(root, sp, "labels")
         if not os.path.isdir(img_dir):
@@ -82,6 +95,36 @@ def index_dataset(root):
                 if os.path.isfile(lbl):
                     pairs.append((os.path.join(img_dir, fn), lbl))
     return pairs
+
+
+def sp_noise(path):
+    """Salt-and-pepper level: fraction of isolated extreme pixels.
+
+    The child dataset ships with noise applied to 5% of pixels while hazard
+    crops are clean, so pasting a clean crop onto a speckled background makes
+    the composite visually inconsistent and the hazard easier to spot than it
+    should be. Screening backgrounds by this keeps the two consistent.
+    """
+    import numpy as np
+    from PIL import Image
+    a = np.asarray(Image.open(path).convert("L"), dtype=np.int16)
+    if min(a.shape) < 20:
+        return 1.0
+    st = np.stack([np.roll(np.roll(a, dy, 0), dx, 1)
+                   for dy in (-1, 0, 1) for dx in (-1, 0, 1)])
+    dev = np.abs(a - np.median(st, axis=0))
+    return float((((a < 15) | (a > 240)) & (dev > 60)).mean())
+
+
+def whitespace(path):
+    """Fraction of near-white pixels. The child dataset contains collages and
+    infographics whose panels are separated by white gutters; a hazard pasted
+    into a different panel from the child is at a physically meaningless
+    "distance", so such backgrounds must be rejected."""
+    import numpy as np
+    from PIL import Image
+    a = np.asarray(Image.open(path).convert("L").resize((128, 128)))
+    return float((a > 235).mean())
 
 
 def rect_gap(a, b):
@@ -113,17 +156,53 @@ def main():
                     help="hazard height as a fraction of child box height")
     ap.add_argument("--val-frac", type=float, default=0.6,
                     help="fraction of child images used for the val split")
+    ap.add_argument("--max-noise", type=float, default=0.002,
+                    help="reject child backgrounds whose salt-and-pepper level "
+                         "exceeds this (0 disables). The child dataset was "
+                         "exported with 5%% noise; hazard crops have none.")
+    ap.add_argument("--child-splits", nargs="+", default=["valid", "test"],
+                    choices=["train", "valid", "test"],
+                    help="which child splits to draw backgrounds from. Defaults "
+                         "to the held-out splits so composites do not reuse "
+                         "images the child detector was trained on.")
+    ap.add_argument("--max-aspect", type=float, default=0.7,
+                    help="reject child boxes wider than this (w/h). The child "
+                         "dataset annotates a head/face in ~40%% of images and a "
+                         "full body in ~57%%, and the reachability label is "
+                         "relative to box height, so mixing them makes "
+                         "\"arm's length\" mean different physical distances. "
+                         "Set 0.7 to keep body-like boxes only.")
+    ap.add_argument("--min-box-area", type=float, default=0.03,
+                    help="reject child boxes smaller than this fraction of the "
+                         "frame; tiny boxes are usually thumbnails inside a "
+                         "collage rather than the subject of the scene")
+    ap.add_argument("--max-whitespace", type=float, default=0.15,
+                    help="reject backgrounds with more near-white area than "
+                         "this (collage/infographic detector)")
+    ap.add_argument("--safe-margin", type=float, default=None,
+                    help="require reach_ratio >= this to label SAFE, skipping "
+                         "the band between --reach and this value. Without a "
+                         "margin, an image just past the boundary is labelled "
+                         "safe while the hazard is still nearly within reach. "
+                         "Defaults to 2x --reach.")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
+    if args.safe_margin is None:
+        args.safe_margin = args.reach * 2
+    if args.safe_margin < args.reach:
+        raise SystemExit("--safe-margin must be >= --reach")
 
     from PIL import Image
 
     rng = random.Random(args.seed)
-    children = index_dataset(args.child_root)
+    children = index_dataset(args.child_root, args.child_splits)
     hazards = index_dataset(args.hazard_root)
     if not children or not hazards:
         raise SystemExit(f"need both datasets: {args.child_root}, {args.hazard_root}")
-    print(f"source pools: {len(children)} child images, {len(hazards)} hazard images")
+    print(f"source pools: {len(children)} child images "
+          f"(splits={args.child_splits}), {len(hazards)} hazard images")
+    if args.max_noise:
+        print(f"screening child backgrounds at noise <= {args.max_noise}")
 
     haz_names = []
     yml = os.path.join(args.hazard_root, "data.yaml")
@@ -131,11 +210,20 @@ def main():
         import yaml
         haz_names = (yaml.safe_load(open(yml, encoding="utf-8")) or {}).get("names", [])
 
-    # split by SOURCE CHILD IMAGE so no child leaks across val/test
-    order = list(range(len(children)))
-    rng.shuffle(order)
-    cut = int(len(order) * args.val_frac)
-    split_of = {i: ("val" if k < cut else "test") for k, i in enumerate(order)}
+    # Split by SOURCE PHOTOGRAPH, not by file. The child export contains
+    # several near-identical copies of each source (Roboflow names them
+    # <source>_jpg.rf.<hash>.jpg), so keying on the file would scatter copies
+    # of one child across val and test -- reproducing exactly the train/val
+    # leakage found in the child dataset itself (§2.2).
+    def src_of(path):
+        return re.split(r"\.rf\.", os.path.basename(path))[0]
+
+    sources = sorted({src_of(f) for f, _ in children})
+    rng.shuffle(sources)
+    cut = int(len(sources) * args.val_frac)
+    split_of_src = {s: ("val" if k < cut else "test") for k, s in enumerate(sources)}
+    print(f"  {len(sources)} unique source photographs -> "
+          f"{cut} val / {len(sources) - cut} test")
 
     for sp in ("val", "test"):
         os.makedirs(os.path.join(args.out, sp, "images"), exist_ok=True)
@@ -149,13 +237,29 @@ def main():
         cboxes = [b for b in load_boxes(clbl_p)]
         if not cboxes:
             continue
+        if args.max_noise and sp_noise(cimg_p) > args.max_noise:
+            continue                     # speckled background; would not match the crop
         try:
             cim = Image.open(cimg_p).convert("RGB")
         except Exception:
             continue
         W, H = cim.size
-        # largest child box — the most reliable subject in the frame
+        # largest child box -- the most reliable subject in the frame
         cb = max(cboxes, key=lambda b: b[3] * b[4])
+        if cb[4] > 0 and cb[3] / cb[4] > args.max_aspect:
+            continue                     # head/face box: "0.5x height" would be ~10cm
+        if cb[3] * cb[4] < args.min_box_area:
+            continue                     # thumbnail inside a collage, not the subject
+        # A hazard can only be placed --safe-margin child-heights away if the
+        # child is small enough for that gap to fit in the frame. Requiring it
+        # for EVERY background keeps the same children eligible for both
+        # labels; otherwise "safe" images would systematically contain smaller
+        # children than "unsafe" ones, and that size difference - not the
+        # distance - could drive the result.
+        if cb[4] > 1.0 / (1.0 + args.safe_margin):
+            continue
+        if args.max_whitespace and whitespace(cimg_p) > args.max_whitespace:
+            continue                     # collage/infographic; cross-panel gap is meaningless
         cx1, cy1, cx2, cy2 = to_pixels(cb, W, H)
         ch = cy2 - cy1
         if ch < 40:                      # too small to place around sensibly
@@ -184,7 +288,14 @@ def main():
         crop = crop.resize((nw, nh))
 
         # place it at a sampled edge-gap, in units of child height
-        want_ratio = rng.uniform(*args.span)
+        # Draw from the UNSAFE band or the SAFE band, never the ambiguous
+        # middle: a hazard just past the reach threshold is still practically
+        # within reach, so labelling it "safe" would be wrong.
+        if rng.random() < 0.5:
+            want_ratio = rng.uniform(0.0, args.reach)
+        else:
+            want_ratio = rng.uniform(args.safe_margin, max(args.span[1],
+                                                           args.safe_margin * 1.6))
         gap = want_ratio * ch
         ccx, ccy = (cx1 + cx2) / 2, (cy1 + cy2) / 2
         placed = None
@@ -220,9 +331,14 @@ def main():
         centroid = min(math.hypot((bx[0] + bx[2]) / 2 - hcx,
                                   (bx[1] + bx[3]) / 2 - hcy) for _, bx in cand)
         reach_ratio = edge / ref_h
-        label = "unsafe" if reach_ratio <= args.reach else "safe"
+        if reach_ratio <= args.reach:
+            label = "unsafe"
+        elif reach_ratio >= args.safe_margin:
+            label = "safe"
+        else:
+            continue            # ambiguous band - not confidently labellable
 
-        sp = split_of[ci]
+        sp = split_of_src[src_of(cimg_p)]
         stem = f"cooc_{made:05d}"
         out_im.save(os.path.join(args.out, sp, "images", stem + ".jpg"), quality=92)
         # reference boxes (0=child, 1=hazard) for diagnosing detection vs fusion
@@ -239,7 +355,9 @@ def main():
             "edge_dist_norm": round(edge / diag, 4),
             "hazard_class": (haz_names[hb[0]] if hb[0] < len(haz_names) else hb[0]),
             "n_children": len(cboxes),
-            "child_src": os.path.basename(cimg_p),
+            "child_split": os.path.basename(
+                os.path.dirname(os.path.dirname(cimg_p))),
+            "child_src": src_of(cimg_p),
             "hazard_src": os.path.basename(himg_p),
         })
         made += 1
