@@ -4,168 +4,125 @@ Read this first every session — a teammate using a different tool
 may have worked on this since your last session. Keep entries to
 1-3 lines each, most recent on top.
 
+Detailed results, numbers and caveats live in `results_and_findings.md`.
+This file is the terse log plus the operational notes below.
+
 ---
 
-**2026-07-25** — **Phase 0 COMPLETE.** Both smoke tests pass (child single-class + hazard 12-class load/train/val end-to-end, metrics logged to `results/metrics/baseline_{child,hazard}.csv`; numbers throwaway = 1 epoch/2% data). Corrected context.md's swapped dataset totals (child 4,705/v3, hazard 5,917/v1). Wrote `notebooks/colab_train.ipynb` (clones repo, installs, Roboflow key from Colab Secrets, downloads v3/v1, runs fix_data_yaml + normalize_child_labels, trains both 100ep, per-model bundle+download cells). James committed+pushed.
+## Status: ALL PHASES COMPLETE (0-6)
 
-**2026-07-25 — PHASE 1: hazard baseline DONE.** Real 100-epoch run on Colab confirmed (smoke=False row): **hazard mAP50=0.566, mAP50-95=0.407** (val split, default hyperparams). Full run bundled + downloaded (best.pt 6.26MB verified in zip). Gotcha learned: Colab runtime reset wipes /content, so bundle+download+VERIFY (`unzip -l` shows weights/best.pt) in the SAME session right after training; an earlier bundle caught only the CSV. NOTE clutter: `results/metrics/baseline_*.csv` still contain 2 committed local SMOKE rows (smoke=True) above the real rows — should strip/redirect smoke logging. Child confirmed too.
+Deliverables: `models/{child,hazard}_best.pt`, `results/metrics/*.csv`,
+`results/paper_tables.md` (10 tables), `results/figures/` (47 figures +
+index), `results_and_findings.md` (full write-up material).
 
-**2026-07-26 — PHASE 1 COMPLETE.** Both artifact zips extracted at repo root (runs/detect/{child,hazard}_baseline/ [gitignored] + results/metrics/baseline_*.csv [tracked]); both best.pt ~6.26MB verified on disk. Baselines (val, default hyperparams, smoke=False rows): **child mAP50=0.947 mAP50-95=0.827**; **hazard mAP50=0.566 mAP50-95=0.407**. Housekeeping done: stripped the 2 stale smoke rows from `baseline_*.csv` (now real runs only); `train.py --smoke` now logs to `smoke_<model>.csv` instead of the baseline file (root-cause fix); gitignored `yolov8*.pt` (ultralytics auto-download) + `results/metrics/smoke_*.csv`. 
-**2026-07-26 — Pinned `ultralytics==8.4.106` in both notebooks** (was unpinned; 8.4.x changed cls-head init vs 8.3.x, and a local 8.3.130 re-val of the same weights gives mAP50 0.570 vs the recorded 0.5657 — concrete proof the drift matters). All Phase 3+ ablations must run pinned or comparisons are invalid.
+Remaining work is **optional polish only**, none of it needed for the paper:
+- Phase 2 re-sweep with `lr0` narrowed to (1e-4, 2e-3) so box/cls/dfl get
+  explored at a sane rate (~3 h, low expected gain)
+- Reproducible hazard retrain — same config stated explicitly (~2.4 h; would
+  NOT improve accuracy, see `models/README.md`)
+- Seed variance: everything is single-seed (`seed=0`, deterministic), so
+  differences of 0.01-0.02 cannot be separated from noise. 3 seeds on one
+  config would give an error bar.
 
-**2026-07-26 — Per-class hazard baseline saved** → `results/metrics/per_class_hazard_baseline.csv` (a named context.md deliverable). Overall mAP50 0.5657 is the UNWEIGHTED mean over 12 classes, so tiny classes count equally. Strong on 8/12 (Scissors .870, Coin .855, Chainsaw .730, Knife .713, Stapler .703, Screwdriver .688, Fork .644); dragged down by **Chisel .055 (only 3 val imgs/5 inst — costs ~0.047 mAP50 alone)**, Drink .284 (145 imgs but likely label ambiguity: bottles/cups/glasses all "Drink"), Axe .371, Dumbbell .398. Excl. Chisel the other 11 avg 0.617; the best 8 avg 0.716. Low support ≠ automatic failure (Screwdriver 8 imgs → .688), so Chisel and Drink are DATA problems to name in the write-up, not model failures.
+## Operational notes (read before running anything)
 
-**2026-07-27 — FIXED broken resume in ablation_imgsz.py (hazard run got cut off by GPU limit).** Same bug class as the tuning ndjson: `--project` sent RUNS to Drive but the resume-critical `results/metrics/ablation_imgsz_<model>.csv` stayed in the **ephemeral cloned repo**, so a disconnect wiped it and the script would silently RETRAIN every resolution from scratch. Fixes: (1) resume now keys off `<project>/ablation_imgsz_<model>_<size>/weights/best.pt` on Drive — a size with weights is **re-validated in ~1 min instead of retrained for hours**; (2) results table is mirrored to `<project>/` and restored from there. Also fixed an `UnboundLocalError` (inner `import shutil` shadowed the module import). All paths verified locally: recover, mirror, restore-after-wipe.
-- **Second fix (caught by James doubting the result):** the first version keyed recovery off `weights/best.pt` existing, which does NOT prove completion — the run dir is created when training STARTS and best.pt is rewritten on every improvement, so a cut-off run looks identical to a finished one and would have been silently validated and reported as a full 30-epoch result. Recovery now requires `results.csv` row count >= --epochs; a partial run prints a warning and retrains. Verified: 30/30→recover, 12/30→retrain, 0→retrain.
-- **Check actual completion with epoch counts, never directory listings.** Real state of the interrupted hazard run: **416=30/30 ✓, 640=30/30 ✓, 832=21/30 ✗**. (Had the buggy version run, it would have validated the 21-epoch 832 model and reported it as complete — understating 832 specifically and plausibly flipping the ablation's conclusion to "resolution doesn't help".)
-- **Added partial-run RESUME:** rather than retraining 832 from scratch (~1.2h), the script now continues from `last.pt` (9 epochs, ~22min). Passes the checkpoint PATH as `resume=<path>`, never `resume=True` — the latter falls back to `get_latest_run()` which picks the newest run anywhere and could resume the wrong one. The checkpoint carries its own lr0/box/cls/dfl/epochs so the continuation matches the original config; only imgsz/batch/device/close_mosaic are overridable on resume. `train_min` is left blank for resumed/recovered runs since it isn't a clean full-run measurement (infer_ms is unaffected).
-- **Runs live on a DIFFERENT Google account's Drive** than intended (`drive.mount()` mounts the notebook owner's Drive — can't cross accounts). Either run the remaining work as that account, or move the three run folders to the main account's `MyDrive/deeplrn_group2/runs/`.
+- **The test splits have been used, once.** Do not re-run `evaluate.py` and
+  act on its output — changing anything and re-evaluating turns the test set
+  into a second validation set.
+- **After every Roboflow download, including on Colab:** run
+  `scripts/fix_data_yaml.py` (Roboflow ships broken relative paths) and
+  `scripts/normalize_child_labels.py` (child export is nc=2).
+- **The detectors use different input resolutions** — child 416, hazard 640.
+  Inference code must resize per model, not once per frame.
+- **`optimizer='auto'` silently discards `lr0`** and hard-codes AdamW at
+  `0.002*5/(4+nc)`. Never use it for anything being compared.
+- **Pin `ultralytics==8.4.106`.** 8.3 vs 8.4 differ in detection-head init.
+- **Colab: write runs to mounted Drive** (`--project`). `/content` is wiped on
+  disconnect, taking resume state with it. Verify bundles with `unzip -l`
+  before closing a session.
+- Some ablation runs live on a **different Google account's Drive** than
+  intended (`drive.mount()` mounts the notebook owner's Drive). Either work as
+  that account or move them to the main account's `MyDrive/deeplrn_group2/runs/`.
+- `models/*.pt` (12 MB total) are **not** gitignored — decide whether to commit
+  the weights or track only `models/README.md`.
 
-**2026-07-27 — PHASE 6 DONE. PROJECT COMPLETE (all phases 0-6).** `scripts/make_report.py` generates everything for the write-up FROM the CSVs, so the paper can't drift from recorded numbers — re-run it after any new result.
-- **`results/paper_tables.md`** — 10 Markdown tables ready to paste (datasets+corrections, baseline vs final, full tuning sweep, imgsz ablation incl. the superseded child run, optimizer, distance-reference, final test, per-class test, cost, literature comparison). Each carries a one-line caveat under it. Verified: 14/14 headline numbers match the source CSVs verbatim.
-- **`results/figures/` — 47 figures + `README.md` index.** (First pass only grabbed 11; James flagged the gap.) Now pulls the FULL chart set from the 4 paper-relevant runs (child_baseline, hazard_baseline, final_child, final_hazard): training curves, both confusion matrices, P/R/F1/PR curves, `labels.jpg` class-distribution (evidences the imbalance caveat), and **`val_batch0_pred.jpg` + `_labels.jpg` qualitative prediction-vs-truth pairs** — the most paper-useful ones and the biggest omission first time. Smoke tests and stray `val*/` dirs deliberately skipped. **The ablation runs have NO charts (trained with `plots=False`)** — the generated CSV-based plots cover them. Naming: `final_child_*` and `baseline_hazard_*` are the SHIPPED models; `baseline_child_*` and `final_hazard_tuned_*` are comparison-only.
-- Earlier 5 generated plots + 6 ultralytics curves: `ablation_imgsz.png` (child inversion is visually obvious), `ablation_optimizer.png`, `distance_distributions.png` (shows the classes genuinely overlap), `risk_fusion_confusion_test.png`, `per_class_hazard_test.png`, plus training curves / confusion / PR for both final models.
-- Markdown chosen because `docs/` has only `proposal.pdf` — no draft exists yet, and MD pastes cleanly into Docs.
-- Tables are NUMBERS ONLY per context.md Phase 6 ("don't write prose"); interpretation stays in `results_and_findings.md`.
+---
 
-**2026-07-27 — PHASE 5 DONE. ALL PHASES COMPLETE. Test splits touched ONCE — do not re-run `evaluate.py` and act on it, that would turn test into val.**
-- **Detectors (test):** child @416 **0.9670**/0.9081 | hazard @640 **0.5506**/0.3958. Hazard generalises cleanly (−0.015 vs val). **Child test EXCEEDS val (0.967 > 0.955) — most likely because the child TEST split has the highest contamination (~21% near-dupes of train, vs ~17% val, §2.2). Not evidence of strong generalisation; say so.**
-- **RISK FUSION (headline): balanced accuracy 0.5947, 95% CI [0.483, 0.707] — the interval INCLUDES chance (0.500).** With n=77 the result is **not statistically distinguishable from chance**. Point estimate is above chance and val was clearer (0.6705), but the honest claim is "modest positive signal this test set is too small to confirm". Do not overstate this.
-- **Val→test drop 0.6705→0.5947 (−0.076)**, two measurable causes: (1) threshold fitted on only 123 val images → some overfitting; (2) detection degraded — **36% of test images had NO hazard detected vs 22% on val**, all forced Safe by the fusion rule, accounting for most of the 18 FNs. The §8.2 finding (detection dominates geometry) reappears on test.
-- Per-class hazard (test) again tracks support: Screwdriver 0.995 is as untrustworthy as Chisel 0.168 — both rest on a few instances. Quote only well-supported classes (Coin/Fork/Knife/Drink/Scissors).
-- Cost: quote **7.24 ms/frame on T4** (Phase 4a). The Phase 5 run was CPU (~70 ms) — script now prints a hardware warning so the wrong number doesn't get quoted.
-- Literature table written with per-row "why not comparable" notes; claim stays **"competitive with published figures"**, NOT that dual-specialist beats unified (would need a unified internal control we never trained).
-- `evaluate.py` safeguards: refuses test without `--confirm-test`, `--dry-run` rehearses on val (verified — reproduced Phase 3c val numbers exactly), nothing calibrates inside it.
-- `results_and_findings.md`: new **§9 Phase 5**; §10/§11 renumbered; status now ALL PHASES COMPLETE.
+## Log
 
-**2026-07-27 — PHASE 3c DONE (+ 4b calibration). Null result on the metric, but a bigger finding underneath.** `scripts/ablation_distance_ref.py` runs BOTH final detectors over the co-occurrence val split (each at its OWN imgsz — child 416 / hazard 640) and calibrates a threshold per metric. Runs locally on CPU in ~1 min, no GPU. Refuses `--split test` without `--confirm-test`.
-- **NO STABLE WINNER — the ranking FLIPS with detector confidence** (balanced acc): conf .25 → centroid .6683 vs edge .6425 (centroid +.026); conf .05 → .6705 vs **.6726** (edge +.002); conf .01 → .6126 vs .5307 (centroid +.082). Since conf belongs to the detectors, not the fusion layer, no ordering survives. **Conclusion: the two distance references are equivalent here; keep centroid (the original design).**
-- **THE REAL FINDING: detection dominates geometry.** At the ultralytics default conf=0.25 the hazard detector misses the pasted hazard in **70/123 images (57%)**, and the fusion rule forces those Safe without computing any distance — both metrics then score BELOW the trivial baseline on plain accuracy (.569/.561 vs .740). Refining the geometric rule is misdirected effort while >half the hazards are missed.
-- **Reported balanced accuracy, not plain** — the val split is 74% unsafe so a constant "unsafe" predictor gets .740 plain but .500 balanced. Calibration now optimises balanced accuracy.
-- **conf is a system parameter and must be reported** — it was left at the default until now and moves balanced accuracy more than the choice of distance metric does.
-- **4b OUTPUT: centroid @ threshold 0.3625, conf 0.05, val-calibrated.** Feeds Phase 5.
-- Note the oracle experiment on ground-truth boxes (§10.1) gave edge a 19pt lead; that vanishes with real detections — which is exactly why we ran on predictions.
-- `results_and_findings.md`: new **§8 Phase 3c**; §9/§10 renumbered.
+**2026-08-04** — Housekeeping: rewrote this file. Entries had grown to 9-10
+lines against the stated 1-3, and were out of chronological order. Detail
+moved to `results_and_findings.md`; operational gotchas promoted above.
 
-**2026-07-27 — DECIDED: baseline hazard weights are the final model.** Created `models/` with the two deliverables + a provenance README: `child_best.pt` (Phase 4a, imgsz **416**, 0.9554/0.8353) and `hazard_best.pt` (Phase 1 baseline, imgsz **640**, 0.5657/0.4072). Tuned hazard weights kept at `runs/detect/final_hazard` for the record but NOT shipped. Both verified by re-validation.
-- **The two detectors use DIFFERENT imgsz (416 vs 640)** — inference/fusion code must resize per model, not once for both. Easy thing to get wrong later.
-- **TWO REPRODUCIBILITY CAVEATS on the shipped hazard weights, found while packaging them:** (1) that run used `optimizer=auto`, so its `args.yaml` says `lr0: 0.01` but the value actually used was **6.25e-4** — anyone reproducing from the recorded args would use the wrong lr; (2) it predates the `ultralytics==8.4.106` pin so its version is unrecorded. **Recommend retraining that exact config explicitly (AdamW, lr0=6.25e-4, defaults, 640, 100ep) under the pin (~2.4h) before submission** so the headline model is reproducible. Documented in `models/README.md` + §7.1.
-- `models/*.pt` are 6MB each (12MB total) and currently NOT gitignored — decide whether to commit them or track only the README.
+**2026-07-27 — Phase 6 done. Project complete.** `scripts/make_report.py`
+generates `results/paper_tables.md` (10 tables) and 47 figures from the CSVs,
+so the paper cannot drift from recorded numbers. Re-run after any new result.
 
-**2026-07-27 — PHASE 4a COMPLETE. HEADLINE: the Phase 2 tuning made the hazard detector WORSE.** Both models trained 100ep at the locked config; args.yaml verified; runs complete.
-- **Hazard (640, tuned): 0.5256/0.3913 vs baseline 0.5657/0.4072 → delta −0.040/−0.016. WORSE in 10 of 12 classes** (Chainsaw −0.174, Screwdriver −0.088, Stapler −0.060). At equal budget/resolution/optimizer, so it's a fair test.
-- **Cause: the 20-epoch tuning proxy didn't transfer to 100 epochs.** The earlier "+0.038 at equal budget" was the schedule confound (§4.2 retraction); with it removed the direction REVERSES. Tuned dfl=1.06 (vs 1.5) and cls=0.75 (vs 0.5) plausibly favour fast early convergence over final quality.
-- **DECISION NEEDED: the best hazard detector we have is the BASELINE config** (AdamW @ auto lr 6.25e-4, default loss weights) — 0.5657 vs the tuned 0.5256. Don't ship the tuned weights just because they came later. Phases 3a/3b are still internally valid (all conditions shared the tuned config) but their absolute numbers sit on a config now known to be sub-optimal.
-- **Child (416, lr 0.002): 0.9554/0.8353 vs baseline 0.9469/0.8271 → +0.008/+0.008.** Small — comparable to the leakage inflation, don't over-claim. Real win is COST: 35 min train vs ~130 for the 640 baseline (**3.7x faster**), 3.05 ms/img. Note it's config-vs-config (imgsz changed too), not a clean hyperparameter isolation.
-- **Computational cost deliverable DONE: 7.24 ms/frame for BOTH detectors** (child 3.05 + hazard 4.19) ≈ 138 fps on a T4 → the dual-specialist design has no meaningful cost objection at this scale. Closes the gap I flagged in the very first proposal review.
-- Per-class hazard table regenerated under pinned 8.4.106 → `per_class_hazard_final.csv` (supersedes the 8.3.130 one).
-- Child run resumed at ep61; verified continuous (epochs 1-100 unbroken, mAP50 steady .948-.950 across the boundary). True train time 85.7 min, not the 35 min logged for the resumed portion.
-- `results_and_findings.md`: new **§7 Phase 4a** (headline finding, child efficiency, cost table, run integrity); §8/§9 renumbered; remaining-work updated.
+**2026-07-27 — Phase 5 done. Test splits touched once.** Child 0.9670 mAP50,
+hazard 0.5506. Risk fusion balanced acc **0.5947, 95% CI [0.483, 0.707] —
+includes chance**; n=77 is too small to confirm the signal. See §9.
 
-**2026-07-27 — PHASE 4a BUILT, ready to run.** `scripts/train_final.py` + `notebooks/colab_final_training.ipynb`. Config is **baked into the script**, not passed on the CLI, so the final run can't silently disagree with Phases 2-3: child imgsz=416/lr0=0.002/default weights; hazard imgsz=640/lr0=8.8e-4 + tuned box-cls-dfl (auto-loaded from `tuning_hazard_best.yaml`); both AdamW, 100 epochs. Each value carries a comment naming the phase that chose it.
-- **This run is the first FAIR test of whether Phase 2 tuning helped** (see the §4.2 retraction below) — script prints final vs baseline delta at the end. A NEGATIVE delta is a legitimate, reportable result.
-- Emits `results/metrics/final_<model>.csv` (incl. baseline deltas + infer_ms) and `per_class_<model>_final.csv` — the 12-class deliverable, regenerated under pinned 8.4.106 so it matches the final weights (supersedes the 8.3.130 table in §3.1).
-- Resumable off Drive; passes the checkpoint PATH not `resume=True` (which would fall back to get_latest_run() and could continue the wrong run).
-- Verified before spending GPU: config resolution per model, and the per-class API (`names`, `ap_class_index`, `class_result`) against real val output — first class Axe p=0.5313 matches the existing baseline table.
-- Budget: child ~0.9h, hazard ~2.4h (~3.3h). Split across two sessions recommended.
-- Ordering decision: the optional Phase 2 re-sweep (narrowed lr0) comes AFTER this. Rework if it later wins is bounded to a hazard retrain (~2.4h); child was never tuned so it's unaffected.
+**2026-07-27 — Phase 3c + 4b done.** Centroid vs edge is a **null result**:
+the ranking flips with detector confidence. Real finding — detection dominates
+geometry (57% of hazards missed at default conf). Calibrated: centroid @
+0.3625, conf 0.05. See §8.
 
-**2026-07-27 — CORRECTION to §4.2: the "tuned beats baseline at equal budget (+0.038)" claim was CONFOUNDED and has been retracted.** Ultralytics anneals lr over the SCHEDULED epoch count, so comparing the tuned 20-epoch run against the baseline's epoch-20 checkpoint is unfair: baseline at ep20 of a 100-ep schedule is still mid-decay (lr=5.07e-4, verified from results.csv) while the 20-ep run has annealed to ~1% of lr0 and fully converged. The shorter run wins on schedule alone. **Phase 4 (tuned config at 100ep vs the 100ep baseline) is the first fair test — there is currently NO clean evidence tuning beat the default.**
-- Answer to "is lr0-dominated a big issue?": **not for the models or the ablations** (tuned lr0=8.8e-4 ≈ auto's 6.25e-4, so we're at a sane operating point; 3a/3b held the config fixed so their comparisons are unaffected). **It does narrow what Phase 2 can claim**: we tuned lr0; box/cls/dfl were NOT resolved (spread 0.034, within noise). Optional fix = ~3h sweep with lr0 narrowed to (1e-4, 2e-3) so the loss weights get explored at a sane rate; low expected gain.
+**2026-07-27 — Decided: ship the BASELINE hazard weights.** Phase 4a showed
+the tuned config is 0.040 mAP50 worse. `models/` created with both
+deliverables + provenance README. Two reproducibility caveats documented.
 
-**2026-07-27 — Co-occurrence set REGENERATED with cleaner backgrounds (James's call — child images were too noisy).** Three fixes to `make_cooccurrence_eval.py`, all verified:
-- **`--max-noise 0.002` (new, default on):** child export has salt-pepper on 5% of pixels but hazard crops have NONE, so a clean crop on a speckled background was visually inconsistent AND made the hazard easier to detect than it should be. Screening drops median composite noise **0.0037 → 0.00001** and **costs zero source diversity** — measured: 100% of source photos have ≥1 near-clean copy, so filtering picks the clean copy rather than discarding the child. (Considered and rejected: switching to `datasets/children.v2i.yolov8`, which is 100% clean but only 100 images.)
-- **`--child-splits valid test` (new, default):** backgrounds now come only from the child detector's HELD-OUT splits, so composites don't reuse training images. Closes the inflation I flagged when first building the set.
-- **Split grouping fixed to key on SOURCE PHOTO, not file** — copies of one child were being scattered across val/test, i.e. reproducing the exact leakage found in the child dataset itself. Verified 0 sources span val+test.
-- **New limitation found + `--max-aspect` added:** child dataset annotates a head/face in ~40% of images and a full body in ~57% (median box w/h 0.61, p10-p90 0.39-1.08). Since the reach label is relative to box HEIGHT, "arm's length" is not a constant physical distance across the set. Default left permissive (1.4); `--max-aspect 0.7` restricts to body-like boxes. Documented in §8.1.
-- Final set: 200 imgs, **107 unsafe / 93 safe**, val 130 / test 70, 12/12 hazard classes. Oracle acc: reach 1.000 (sanity ✓), centroid **0.655**, edge **0.835** — still non-tautological, 18pt edge advantage.
-- Also made the script ASCII-only so `--help` works on a cp1252 console.
+**2026-07-27 — Phase 4a done. Headline: tuning made hazard WORSE** (−0.040
+mAP50, worse in 10/12 classes) — the 20-epoch proxy did not transfer to 100.
+Child +0.008 and trains 3.7x faster at 416. Pipeline cost 7.24 ms/frame. §7.
 
-**2026-07-27 — Investigated "corrupted" child data. NOT corruption, but found real train/val leakage — measured, and it's minor. Dataset KEPT.** James flagged data/child as looking corrupted.
-- **The speckling is documented augmentation**, not damage: child README says *salt-and-pepper noise on 5% of pixels*, both sets stretched to 640x640. Images that look blacked-out are genuinely dark photos (my first two "corruption" detectors were false positives on dark scenes — the README settled it, not pixel heuristics).
-- **REAL FINDING — child train/val/test leakage.** Roboflow filenames encode the source (`<src>_jpg.rf.<hash>`), so cross-split duplication is checkable: 386 source names span train↔val/test; pixel-verified, **~17% of val and ~21% of test are near-duplicates of train images** (one train/val pair differs by 0.42 = same photo). **Hazard is CLEAN (0 cross-split, 3863 sources/5917 imgs).**
-- **Impact measured, not assumed** — re-ran child baseline weights on a decontaminated val subset (313 of 372): full **0.9548/0.8526** vs clean **0.9465/0.8321** → inflation only **+0.008 mAP50 / +0.021 mAP50-95**. Task is visually redundant enough that memorisation adds little. **Decision: keep the dataset** (re-splitting would also violate the keep-creator's-split constraint); quote both figures in the paper.
-- **Separate, arguably worse limitation:** 4,705 child images come from only **~649 unique source photos** (~7x duplication) → effective visual diversity is an order of magnitude below the image count; bounds generalisation claims more than the leakage does. Hazard fine (~1.5x).
-- Note for the fusion eval: `make_cooccurrence_eval.py` samples child images from ALL child splits, so some composites use photos the child detector trained on — flagged, since it inflates detection within the fusion benchmark.
-- All written into `results_and_findings.md` §2.2 + a pointer in §3.
+**2026-07-27 — Retracted the "+0.038 at equal budget" claim (§4.2).** It was
+confounded by the lr schedule: a 20-epoch run is fully annealed at epoch 20
+while a 100-epoch run is not. Phase 4a became the first fair test.
 
-**2026-07-27 — CO-OCCURRENCE EVAL SET BUILT — §8.1 blocker resolved. 3c + 4b + 5 are unblocked.** `scripts/make_cooccurrence_eval.py` composites hazard crops onto real child images at controlled separation → `data/cooccurrence/` (gitignored): **200 imgs, 98 unsafe / 102 safe, val 120 / test 80 grouped by source child, all 12 hazard classes, 191 unique children.** vs the old set (93 unsafe scenes, ZERO far-apart-safe, 3 classes, coin-dominated, 3x-augmented).
-- **Key design — ground truth is deliberately NOT either metric under test**, else 3c is a tautology. Label = REACHABILITY: `reach_ratio = edge_gap / child_box_height`, unsafe if ≤0.5 (~arm's length). That's scale-relative (child size) while both predictors are image-diagonal-normalised, so neither recovers it automatically.
-- Ground truth uses **min over ALL labelled children**, matching the fusion rule's min-over-pairs — caught in testing, 17/60 images had >1 labelled child, so scoring against only the placed-around child would have disagreed with the rule for reasons unrelated to the metric.
-- reach_ratio sampled uniformly over [0,1.5] so the set brackets the boundary and includes ambiguous cases (not trivially separable).
-- **Oracle check on ground-truth boxes (NOT detector output — this is an upper bound):** reach_ratio 1.000 (sanity ✓), centroid **0.660**, edge **0.855**. Both <1.0 and classes overlap → not a tautology. The 19.5pt edge advantage is preliminary support for the 3c hypothesis; detection error will lower both.
-- Limitations recorded in §8.1: composites test pipeline mechanics not real-world risk; visible paste seams make hazards easier to detect; the 0.5 reach threshold is a stated assumption; child dataset under-labels multi-child frames.
+**2026-07-27 — Co-occurrence eval set built, then twice corrected.** Composites
+hazard crops onto held-out, noise-screened child photos; ground truth is
+*reachability*, deliberately not either metric under test. See §11.1.
 
-**2026-07-27 — Decision: hazard imgsz ablation will NOT be re-run.** Team call — noted as a limitation in `results_and_findings.md` §8.3 instead. Rationale recorded there: hazard's 3a run used its Phase 2 TUNED lr throughout, so it does NOT have the specific fault that broke child's (untuned default lr), and there's no known error in it. But it predates the 3b optimizer decision, so its imgsz=640 result is strictly conditional on AdamW @ lr0=8.8e-4 and is not optimizer-independent. Don't re-open this without new evidence.
+**2026-07-27 — Investigated "corrupted" child data.** Speckling is documented
+augmentation, not damage. But found real leakage: ~17% val / ~21% test are
+near-duplicates of train. Measured impact only +0.008 mAP50 — dataset kept. §2.2.
 
-**2026-07-27 — Child imgsz RE-RUN COMPLETE — RANKING FLIPPED, 3a's child conclusion is overturned.** At the correct lr0=0.002: **416 .9626/.8127** (27.6min, 2.48ms) | 640 .9547/.8059 (41.0min, 4.89ms) | 832 .9504/.7936 (63.8min, 6.94ms). Every size improved (+.021–.042 mAP50, +.050–.071 mAP50-95), and **416 went from LAST on mAP50 at lr .01 to FIRST at lr .002**. For child, 416 wins accuracy AND is 1.97x faster — no trade-off.
-- **→ Phase 4 uses DIFFERENT resolutions per detector: child imgsz=416 (lr0=0.002, default loss weights), hazard imgsz=640 (lr0=8.8e-4, tuned weights).** Legitimate since the detectors are independent — and a result only findable by ablating both models, which is why the earlier "hazard-only to save GPU" plan was wrong.
-- **Methodological finding worth reporting:** the greedy ablation ordering (tune → resolution → optimizer) assumes near-independence, and this is direct evidence it doesn't hold — an ablation conditioned on an untuned hyperparameter gave a confidently WRONG answer. Not hypothetical any more; we have the inversion to show.
-- Run validated: args.yaml confirms lr0=0.002 on all three + only imgsz varied; 30 epochs each; no timer resets. Consistency check passed again — the 640 row is IDENTICAL to Phase 3b's AdamW child (.95473/.80589), same deterministic config.
-- `results_and_findings.md`: §5.2 marked SUPERSEDED (kept for the record), new authoritative §5.2b, §5.3 rewritten (per-detector optimum table + the inversion lesson), §6.5 updated, Phase 4 config table updated, cross-phase summary + remaining-work updated.
+**2026-07-27 — Child imgsz re-run: the ranking INVERTED.** At the correct
+lr0=0.002, 416 beats 640 (it was last at lr0=0.01). Direct evidence that a
+greedy ablation conditioned on an untuned hyperparameter can be wrong. §5.2b.
 
-**2026-07-27 — Child imgsz RE-RUN ready (Session C in colab_ablation_imgsz.ipynb).** Confirms whether 640 still wins for child at the correct lr0=0.002 (see 3b incidental finding). Added `--lr0` (override tuned/default rate) and `--tag` (suffixes BOTH the results CSV and the run dir names) to `ablation_imgsz.py`. Command: `--model child --lr0 0.002 --tag lr002` → `ablation_imgsz_child_lr002.csv` + `ablation_imgsz_child_lr002_<size>/`, so Phase 3a's child results are untouched.
-- **BUG CAUGHT BY TESTING — would have silently fabricated results.** The execution loop's `trained_weights(...)` call spans two lines, so threading the tag missed it; it kept resolving to the UNTAGGED dir. Effect: the re-run found Phase 3a's completed `ablation_imgsz_child_640` (lr0=0.01), logged "complete run found — validating instead of retraining", never trained, and would have written the OLD lr0=0.01 metrics into the new CSV labelled lr0=0.002. Fixed; verified by stubbing `ultralytics.YOLO` and asserting the captured `train()` kwargs (lr0=0.002, imgsz, epochs, optimizer, name=ablation_imgsz_child_lr002_416) — now trains fresh under the right name.
-- Phase 3b results confirmed saved+committed (a7835fc): both `ablation_optimizer_*.csv` tracked, 6 run dirs + best.pt local in gitignored runs/.
+**2026-07-27 — Phase 3b done. AdamW selected.** Each optimizer got its own
+learning rate (holding one fixed would just measure which optimizer suits it).
+Also revealed child was undertrained in 3a at lr0=0.01. §6.
 
-**2026-07-27 — PHASE 3b COMPLETE. AdamW selected for Phase 4.** Hazard: SGD .5130/.3680 | Adam .5181/.3814 | **AdamW .5259/.3865** (wins both). Child: SGD .9509/**.8196** | Adam .9528/.8028 | **AdamW .9547**/.8059 (split — AdamW best mAP50, SGD best mAP50-95 by .014). Spreads are small (.004–.018).
-- **Consistency check PASSED exactly:** 3b AdamW hazard reproduced 3a imgsz=640 to 5 decimals (.52592/.38645). Cause: ultralytics defaults `seed=0, deterministic=True`. → **All results are single-seed; we have NO variance estimate.** Differences of .01–.02 can't be separated from seed noise. Report optimizer ranking as "AdamW best or tied-best in every comparison", not as significant. 3 seeds on one config would fix this.
-- **INCIDENTAL FINDING — child was undertrained in Phase 3a.** Child never tuned → 3a ran AdamW at default lr0=0.01. At the auto-derived lr0=0.002 (nc=1), same everything else: mAP50 .9338→**.9547** (+.021), mAP50-95 .7561→**.8059** (+.050). 3a's child resolution ranking was internally consistent (all 3 sizes at lr .01) so not invalid, but measured at a handicapped operating point — **recommend re-running child imgsz ablation at lr0=0.002 (~2h) to confirm 640**. Hazard 3a unaffected (used tuned lr throughout).
-- Child at correct lr hits mAP50 .9547 in 30ep, EXCEEDING its own 100ep baseline (.9469), while mAP50-95 (.8059) stays below baseline (.8271) → mAP50 saturates early, localisation keeps improving with epochs.
-- `results_and_findings.md` updated: new §6 (Phase 3b), renumbered §7 cross-phase / §8 open items, added Phase 4 config decision + seed-variance and child-rerun items to remaining work.
+**2026-07-27 — Phase 3a done.** 640 wins for hazard. Child result later
+superseded by the re-run above. Fixed two data-integrity issues: blank
+`train_min`, and a timer reset that under-reported 832 as 22 min vs 71.8. §5.
 
-**2026-07-27 — PHASE 3b (optimizer ablation) ready to run.** `scripts/ablation_optimizer.py` + `notebooks/colab_ablation_optimizer.ipynb`. SGD/Adam/AdamW at imgsz=640 (3a winner), 30ep, loss weights held fixed. ~2.3h hazard + ~2.0h child, one model per session, resumable, Drive-persistent.
-- **Resolved the lr confound I flagged in the very first review: each optimizer gets its OWN lr0, deliberately.** Justification is now empirical, not assumed — our Phase 2 sweep shows AdamW@lr0=0.01 → 0.2325 mAP50 vs AdamW@8.8e-4 → 0.5020 (same optimizer, 2x swing from lr alone). Ultralytics' own `auto` does the same thing (SGD→0.01, AdamW→0.002*5/(4+nc)). Holding one lr across optimizers would just measure which optimizer suits that lr. **Comparison unit = "optimizer + appropriate lr"; must be stated in the write-up.**
-- lr map: hazard SGD 0.01 / Adam+AdamW 8.8e-4 (Phase 2 tuned); child SGD 0.01 / Adam+AdamW 0.002 (ultralytics auto formula, nc=1, since child was never tuned).
-- Script rejects `--optimizers auto` (auto overrides lr0 AND picks the optimizer → not a comparable condition).
-- Built-in consistency check: AdamW should roughly reproduce the Phase 3a @640 result (0.5259 hazard / 0.9338 child) — same optimizer, rate, and budget. Large deviation = something's wrong.
+**2026-07-26 — Phase 2 done (hazard sweep, 6 iterations).** Winner lr0=8.8e-4
++ tuned loss weights. **lr0 dominates by ~5x; box/cls/dfl unresolved** — 5 of 6
+iterations sat at a crippling lr0=0.01. §4.
 
-**2026-07-27 — PHASE 3a COMPLETE (both detectors, 416/640/832 @30ep).** **640 wins both metrics on both models.** Hazard: 416 .5115/.3861 (29.6min, 2.27ms) | **640 .5259/.3865** (45.7min, 3.90ms) | 832 .5003/.3521 (71.8min, 6.30ms). Child: 416 .9209/.7451 (27.2min, 3.17ms) | **640 .9338/.7561** (40.5min, 4.39ms) | 832 .9150/.7225 (63.3min, 6.88ms). → **Lock imgsz=640 for Phase 3b/4.**
-- **832 loses on BOTH models** (mAP50-95 −0.034 each) at 1.6x the inference cost. The 30ep-understates-832 caveat still stands, but losing consistently across two independent datasets makes it credible.
-- **Notable for the compute-cost story:** hazard 416 vs 640 differs by only **0.0003 mAP50-95** (mAP50 −0.014) at **1.72x faster inference** — a defensible efficiency option worth reporting even though 640 is the accuracy pick.
-- Validated the runs, not just the numbers: args.yaml confirms ONLY imgsz varied within each model (hazard held the tuned lr0/box/cls/dfl, child held defaults); all 6 runs completed 30 epochs.
-- **Two data-integrity issues found and fixed:** (1) hazard `train_min` was blank in the CSV (script-version drift between the two sessions) — recovered from each run's results.csv; (2) hazard 832's cumulative timer RESET at epoch 22 (session interrupted + auto-resumed from checkpoint), so naive last-row timing read 22.0min instead of the true **71.8min**. Verified 832 is a genuine continuous 30-epoch run: epochs 1-30 unbroken and mAP50 rises smoothly across the boundary (.435→.467→.499), not a fresh restart. Timings repaired by summing positive deltas only.
+**2026-07-26 — Pinned `ultralytics==8.4.106`** across all notebooks after
+confirming 8.3 vs 8.4 changes head init and shifts the same weights' mAP50
+from 0.5657 to 0.570.
 
-**2026-07-26 — PHASE 3a (imgsz ablation) ready; ultralytics PINNED.** Pinned `ultralytics==8.4.106` in all notebooks — 8.3 vs 8.4 differ in head init ("Remapped N/12 cls head rows"), which would silently break ablation comparability. Wrote `scripts/ablation_imgsz.py` + `notebooks/colab_ablation_imgsz.ipynb`: trains 416/640/832 per model, everything else fixed; hazard loads the Phase 2 winner from `tuning_hazard_best.yaml`, child runs defaults (never tuned — **state this asymmetry in the write-up**); rejects `optimizer=auto`; resumable (skips sizes already in `results/metrics/ablation_imgsz_<model>.csv`); logs `train_min` + `infer_ms` per resolution to feed the computational-cost claim in the proposal intro. Verified all metric accessors (box.mp/mr/map50/map, speed) against real val run.
-- **Decision: BOTH models, 30 epochs (~4.3h: child 2.0h + hazard 2.3h), one model per session.** Initially proposed hazard-only for budget; corrected — child's mAP50_95 (0.827) has localization headroom that resolution directly affects, a "child fine at 416" result feeds the compute-cost story, and the two detectors may legitimately land on different resolutions.
-- Caveat: 30ep is a comparison budget, not convergence; higher res can need more epochs, so 832 may be understated. If 832 wins anyway that's strong.
-- Cheap preliminary hint: the 640-trained hazard model evaluated at 416 scores 0.557 vs 0.5657 (−0.009 only) → hazard may not be very resolution-sensitive. NOT the same experiment as training at 416, but worth noting.
+**2026-07-26 — Phase 1 complete.** Child 0.9469 / hazard 0.5657 mAP50 (100
+epochs, defaults). Per-class hazard table saved; Chisel (3 val images) is a
+data limitation, not a model failure.
 
-**2026-07-26 — PHASE 2 hazard sweep COMPLETE (6/6 iterations, 2.99h on T4, no disconnect).** Winner = iteration 4: **lr0=0.00088, box=8.14272, cls=0.75027, dfl=1.05913** → mAP50=0.502 / mAP50-95=0.364 @20ep, vs untuned baseline @20ep 0.464/0.324 = **+0.038 / +0.040 at equal budget**. Sweep table reconstructed from run log → `results/metrics/tuning_hazard.csv`.
-- **KEY CAVEAT — 5 of 6 iterations were effectively wasted.** The tuner seeds from ultralytics' default lr0=0.01, which is ~16x too high for AdamW. Iters 1/2/3/5/6 all sat at lr0≈0.0088–0.01 → mAP50 0.23–0.28. ONLY iter 4 mutated lr0 down 10x (→8.8e-4) and immediately jumped to 0.502. So the sweep really only discovered "AdamW needs lr≈1e-3" (which `optimizer=auto` already picked: 6.25e-4). box/cls/dfl effects are NOT yet separable from the lr0 effect.
-- **Recommended follow-up if GPU budget allows:** narrow lr0 to (1e-4, 2e-3) and run ~6 more iterations so box/cls/dfl actually get explored at a sane lr. Otherwise report honestly that lr0 dominated.
-- Per-class @iter4: Scissors .848, Coin .824, Knife .666, Fork .628, Stapler .576, Chainsaw .549, Hammer .518, Screwdriver .471, Dumbbell .368, Axe .295, Drink .247, **Chisel ~0 (only 3 val images / 5 instances — too few to learn or evaluate; call this out as a data limitation, not a model failure).**
-- **BUG FIXED:** `tune.py` hardcoded `tune_results.csv`, but **ultralytics 8.4.x writes `tune_results.ndjson`** (Colab ran 8.4.106; local is 8.3.130) → sweep table wasn't copied. `tune.py` now globs `tune_results.*` and converts ndjson→csv (schema-agnostic flattener, unit-tested on nested + varying-key rows). `results/metrics/tuning_hazard.csv` now holds the AUTHORITATIVE sweep converted from the Drive ndjson (6 iterations; cols: iteration,fitness,lr0,box,cls,dfl,precision,recall,mAP50,mAP50_95,box/cls/dfl_loss). Converter also cleans the nested ndjson column names so future runs match this schema.
-- Artifacts placed: raw sweep (ndjson, plots, iter-4 weights) → gitignored `runs/detect/tune_hazard/`; deliverables → tracked `results/metrics/tuning_hazard{.csv,_best.yaml}` + `results/figures/tune_hazard_{fitness,scatter}.png`. Verified csv==ndjson.
-- **Effect sizes (quantified from the sweep):** lr0 8.8e-3→8.8e-4 gained **+0.170 fitness**; the full box/cls/dfl spread across the five lr0≈0.01 runs was only **0.034**. lr0 dominates by ~5x. Conclusion for the paper: at 20-epoch budget, lr0 is the only parameter with a clear effect; box/cls/dfl are within noise and NOT resolved by this sweep.
-- **REPRODUCIBILITY RISK:** notebooks `pip install ultralytics` UNPINNED, and baseline vs tuning may have run on different versions (8.4.x adds "Remapped 3/12 cls head rows from pretrained weights by class name", which changes head init). Pin the version before Phase 3/4 so ablations are comparable.
+**2026-07-25 — Phase 0 complete.** Repo scaffolded, both datasets downloaded
+and verified, child labels collapsed nc=2 → nc=1 (class '0' was children
+mislabelled, merged not deleted), smoke tests pass.
 
-**2026-07-26 — PHASE 2 ready to run (hazard-focused).** Wrote `scripts/tune.py` + `notebooks/colab_tune.ipynb`. Tunes ONLY lr0/box/cls/dfl (ultralytics' default space evolves ~20 params incl. augmentations — overridden via `space=`, verified live: tune_results.csv cols = `fitness,lr0,box,cls,dfl`). Whole sweep saved to `results/metrics/tuning_hazard.csv` + winner to `tuning_hazard_best.yaml`.
-- **CRITICAL FINDING — `optimizer='auto'` silently ignores lr0.** Ultralytics hard-codes AdamW with lr=0.002*5/(4+nc) and logs "ignoring 'lr0='". Baseline ran auto → effectively AdamW @ lr=6.25e-4 (hazard, nc=12) / 2e-3 (child, nc=1). So tune.py **rejects `--optimizer auto`** and defaults to explicit AdamW (baseline-comparable). Without this a quarter of the sweep would be meaningless.
-- **Budget (measured 1.45 min/epoch on T4):** default 6 iters × 20 ep ≈ 2.9h. 8×20=3.9h, 10×20=4.8h. Hazard plateaus ~ep50 (mAP50 .535@50 vs .533@100; .464@20) so 20ep is a defensible *ranking* proxy; winner gets retrained full-length in Phase 4.
-- **Resume — needs TWO things, both easy to get wrong (found by testing, first version was broken):** (a) must pass `resume=True` NOT `exist_ok=True` — Tuner does `self.args.exist_ok = self.args.resume`, so exist_ok is clobbered and each re-run would spawn `tune_hazard2/3/...` instead of continuing; (b) must write to persistent storage — Colab's `runs/` is ephemeral and a disconnect deletes the very CSV resume depends on, so notebook mounts Drive and passes `--project /content/drive/MyDrive/deeplrn_group2/runs`. Verified live: 2nd run logged "Resuming ... from iteration 2", no dir increment. **`--iterations` is a TOTAL target** (`for i in range(start, iterations)`), so re-running the identical command tops up the remaining iterations.
-- lr0 range narrowed to (1e-5,1e-2) vs ultralytics' (1e-5,1e-1) — 0.1 diverges under AdamW and would burn iterations.
-- Child tuning intentionally skipped (0.947 baseline, little headroom); same command with `--model child` if wanted.
-- Carry to Phase 3: lr0 is tuned under AdamW, so the optimizer ablation must use per-optimizer lr (not reuse this lr0 for SGD) or it's confounded.
+**2026-07-25 — Data prep.** Roboflow `data.yaml` paths are broken for both
+datasets; `fix_data_yaml.py` pins an absolute `path:`. context.md's child and
+hazard image totals were transposed — corrected.
 
-**2026-07-25** — RESOLVED the child nc=2 issue: inspected the class-'0' boxes (visualized) — they're **children mislabeled under index 0** (127 boxes across 31 scenes, child-sized, never co-occur with class-1), NOT a distinct object. So MERGED not deleted: new `scripts/normalize_child_labels.py` remaps every box to one class (nc=1, names=['child']); result = 6,220 child boxes all class 0, verified in ultralytics. RE-RUN ON COLAB after re-download. Earlier "stray 1-token lines" was a misread of awk output — 0 malformed, both datasets clean 5-token bbox. Child detector now training-ready. Only remaining doc item: context.md's swapped child/hazard totals (child=4,705, hazard=5,917) + confirm child v3 intended.
+**2026-07-24 — Plan reviewed** (CLAUDE.md, context.md, proposal.pdf). Two
+decisions taken: build a co-occurrence eval set, and soften the baseline claim
+to "competitive with published figures". Proposal errata recorded in §2.1.
 
-**2026-07-25** — James downloaded both training sets into `data/{child,hazard}/`. Verified: correct folder assignment (child=`sotukenn/child-detection-piuns` v3, hazard=`harmfull-objects/harmful-objects-wmmdi` v1, confirmed via workspace+class names), bbox (5-token) Object Detection format ✓. Fixed broken paths with new `scripts/fix_data_yaml.py` (Roboflow ships `../train/images` + no `path:` key → ultralytics resolved against a global datasets_dir pointing at an unrelated project; fixer pins absolute `path:`. RE-RUN THIS ON COLAB after downloading). Both now load in ultralytics 8.3.130. TWO OPEN ITEMS: (1) **child detector is nc=2** `{0:'0', 1:'child'}` — 5295 'child' boxes + 93 spurious class-'0' boxes; design wants single-class → must drop/merge class 0 before training (eyeball what '0' is first). (2) **context.md image totals are SWAPPED**: actual child=4,705 (87/8/5), hazard=5,917 (80/13/7) — context.md/proposal say the reverse; split ratios confirm folders are right, so context.md numbers are the error (also confirm child v3 is intended). Minor: a few child label files have stray malformed 1-token lines.
-
-**2026-07-25** — Started Phase 0 (detector track; fusion-eval track deferred per team). Scaffolded `scripts/download_data.py` (pulls both REAL training sets — child `sotukenn/child-detection-piuns`, hazard `harmfull-objects/harmful-objects-wmmdi` — into gitignored `data/{child,hazard}/`; reads `ROBOFLOW_API_KEY` from env or `.env`; **requires explicit `--child-version`/`--hazard-version`** so a re-version can't change the split; flags count mismatch vs 5917/4705) and `scripts/train.py` (one parametrized YOLOv8n trainer for both; `--smoke` = 1 epoch on 2% subset for local pipeline check; logs mAP to `results/metrics/baseline_<model>.csv`). Added `.env.example`, `results/{metrics,figures}/.gitkeep`. Both scripts `--help`-verified; heavy imports deferred so they parse without ultralytics/roboflow installed. NOTE: real training datasets still NOT downloaded (needs James's Roboflow key + version numbers); local machine has no GPU so real training runs on Colab. Chose single `train.py` over context.md's separate train_child/hazard.py (only the data.yaml differs) — flag if team wants them split.
-
-**2026-07-25** — Reviewed Decision 1's labeled set + eyeballed the 24 flagged images. **Both decisions recorded; Decision 2 (soften baseline claim to "competitive with published literature numbers") is clean, update proposal intro's "match or exceed a unified system" wording to match.** Decision 1 has a blocking issue for the fusion eval — do NOT calibrate/train risk layer on it as-is:
-- **Label ≠ what's evaluated.** `final_label` is set by hazard *presence* (cooccur→unsafe, child_only→safe), not proximity. The distance-based `suggested_label` disagrees on 273/279 unsafe rows. Safe set = 100 child-only imgs with NO hazard box (no distance). So a distance threshold calibrated here degenerates to "hazard present → unsafe" (optimal T just sits above max dist 0.48); the proximity signal — the actual contribution + ablation #4 — is untestable. Missing class = "child+hazard present but far apart = safe" (0 examples).
-- **Flagged 24 = 8 base imgs ×3 aug.** Eyeballed: 7/8 are the centroid artifact (child bent over coins in-hand; huge child box → centroids read far ~0.4 while boxes nearly touch). Only 1 (AI-gen knife+scissors across room) is genuinely far-apart, and even it's debatable. Option 1 (relabel flagged as safe) yields ≤1 usable safe example → not viable. Leave all 24 as unsafe.
-- **Data-quality risks:** (a) several imgs are AI-generated/low-res scrapes → weak "manually labeled test set" for a paper; (b) 300-set = ~8× base imgs with 3 augs each — split MUST be group-by-base-image or aug copies leak across val/test and inflate accuracy; (c) cooccur set has only 3 hazard types (Knife/Scissor/coins, coins-dominated) vs the 12-class detector.
-- **Next (option 2, required before Phase 3c/4/5):** add ~40-60 genuine far-apart child+hazard frames labeled safe (prefer real photos over AI); enforce group-by-base-image val/test split. Detector training (Phases 0-2) is NOT blocked by this — can proceed in parallel.
-
-**2026-07-24** — Bulk-labeled + merged the validation set via `bulk_label_and_merge.py`. `labels.csv` now has a `final_label` (cooccurrence→unsafe, child_only→safe; 21 N/A rows left BLANK for human) and a `flagged_for_review` column. Copied (not moved) images into `datasets/labeled/{unsafe: 279, safe: 100}` (gitignored; originals untouched). 24 cooccurrence rows flagged (dist > 0.3847 = 90th pct) as likely far-apart exceptions — mostly "kid playing with coins" stock photos; still labeled unsafe, flag is advisory. TODO for human: decide the 21 N/A rows + eyeball the 24 flagged. Re-run: `python bulk_label_and_merge.py "datasets/My First Project.v2i.yolov8" "datasets/children.v2i.yolov8"`.
-
-**2026-07-24** — Wrote `label_safe_unsafe.py` (Safe/Unsafe pre-sort helper for manual review; CSV-only output, no dataset modification). Two data findings to know:
-- FORMAT MISMATCH: both datasets under `datasets/` are exported as YOLOv8 **polygon/segmentation** labels (`class_id x1 y1 x2 y2 ...`), NOT bbox (`class_id xc yc w h`). Script derives each polygon's bbox centroid so it works either way, but re-export as 'Object Detection' if bbox is wanted for training.
-- CO-OCCURRENCE SET = `datasets/My First Project.v2i.yolov8` — 4 classes `[Knife, Scissor, child, coins]` (only 3 hazard types, not the 12-class set), child class named "child" not "toddler", **train split only** (no valid/test), 300 imgs. Composition: 279 child+hazard, 18 hazard-only, 3 child-only. Intended as a **validation** set, effectively all-unsafe. Centroid distance is a poor Safe/Unsafe discriminator here (child box fills ~1/3 frame → centroids read far even when boxes overlap in 35% of imgs) — this is the centroid-vs-edge issue (ablation #4). CHILD-ONLY padding set = `datasets/children.v2i.yolov8` (1 class, train/valid/test, 100 imgs).
-
-**2026-07-24** — Reviewed CLAUDE.md, context.md, proposal.pdf (2 independent agent reviews, findings agree).
-Plan approved with open decisions before Phase 0/1: (1) define the child+hazard co-occurrence dataset (source/size/labeling/split) — blocks Phases 3c/4/5; (2) choose baseline story: unified internal control vs. softened literature comparison (Ahmad mAP is different dataset + YOLOv8l vs our v8n); (3) bound the tuning/ablation compute budget; (4) add computational-cost measurement promised in proposal intro.
-Proposal errata: child dataset 1,985 vs 5,917 inconsistency; 700px threshold incompatible with normalized d_norm; "Roboflex" typo.
+**2026-07-24 — Early labelling work** (`label_safe_unsafe.py`,
+`bulk_label_and_merge.py`) on `datasets/`. That set proved unusable for the
+fusion evaluation — its labels track hazard *presence*, not proximity. §11.1.

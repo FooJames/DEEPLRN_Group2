@@ -8,8 +8,9 @@ Distinct from `PROGRESS.md`, which is a session-by-session work log. This
 file is organised for the write-up: what we ran, what we got, and what we
 can honestly claim.
 
-**Status:** ALL PHASES COMPLETE (0-5). Test splits evaluated once, §9.
-Remaining items are optional polish — see [Open Items](#11-open-items-and-blockers).
+**Status:** ALL PHASES COMPLETE (0-6). Test splits evaluated once (§9);
+tables and figures generated (§10). Remaining items are optional polish —
+see [Open Items](#12-open-items-and-blockers).
 
 ---
 
@@ -21,7 +22,7 @@ Remaining items are optional polish — see [Open Items](#11-open-items-and-bloc
 | Model | YOLOv8n (nano), 3.01 M parameters, 8.1 GFLOPs |
 | Hardware | Google Colab, NVIDIA Tesla T4 (15 GB) |
 | Batch size | 16 (all runs) |
-| Evaluation split | **validation only** — the test split is untouched to date |
+| Evaluation split | validation for all development; **test used once**, in Phase 5 (§9) |
 
 Both detectors are trained fully independently: separate datasets,
 separate weights, no shared backbone, no joint training. Fusion happens
@@ -622,7 +623,7 @@ general figure.
 - **Confidence must be reported as a system parameter.** It was left at the
   ultralytics default until this ablation, and it changes balanced accuracy
   by more than either distance metric does.
-- The earlier oracle experiment on ground-truth boxes (§11.1) gave edge a
+- The earlier oracle experiment on ground-truth boxes (§12.1) gave edge a
   19-point advantage. That advantage does not survive contact with real
   detections, which is precisely why the ablation was run on predictions.
 
@@ -731,7 +732,46 @@ internal control, which was not done.
 
 ---
 
-## 10. Cross-phase summary
+## 10. Phase 6 - Generated tables and figures
+
+Everything the write-up needs is generated from `results/metrics/*.csv` by
+`scripts/make_report.py`, so the paper cannot drift from the recorded
+numbers. Re-run it after any new result.
+
+| Output | Contents |
+|---|---|
+| `results/paper_tables.md` | 10 Markdown tables, each with a one-line caveat |
+| `results/figures/` | 47 figures + `README.md` index |
+
+**Tables:** datasets and proposal corrections; baseline vs final detectors;
+the full hyperparameter sweep; resolution ablation (including the superseded
+child run, kept for the record); optimizer ablation; distance-reference
+ablation; final test results; per-class hazard; computational cost;
+literature comparison.
+
+**Figures.** Five are generated from the CSVs - resolution ablation (the
+child inversion is visible as two crossing curves), optimizer ablation,
+distance distributions showing the classes genuinely overlap, the risk-fusion
+confusion matrix, and per-class hazard. The rest are ultralytics' own charts
+copied out of the gitignored `runs/` directory for the four runs that appear
+in the paper: training curves, both confusion matrices, P/R/F1/PR curves,
+class-distribution plots, and **qualitative prediction-vs-ground-truth
+pairs**.
+
+Figure names distinguish what is shipped from what is not: `final_child_*`
+and `baseline_hazard_*` are the delivered models, while `baseline_child_*`
+and `final_hazard_tuned_*` are comparison-only - the latter being the visual
+evidence for §7.1.
+
+**The ablation runs have no charts of their own.** They were trained with
+`plots=False` to save GPU time; the CSV-generated figures above cover them.
+
+Per context.md, this phase produces numbers and figures only. Interpretation
+stays in this document.
+
+---
+
+## 11. Cross-phase summary
 
 | Configuration | Optimizer | lr0 | imgsz | Epochs | mAP50 | mAP50-95 |
 |---|---|---|---|---|---|---|
@@ -766,9 +806,9 @@ legitimate given they are trained and deployed independently:
 
 ---
 
-## 11. Open items and blockers
+## 12. Open items and blockers
 
-### 11.1 The fusion evaluation set (resolved by construction)
+### 12.1 The fusion evaluation set (resolved by construction)
 
 **Original problem.** The first labelled set could not test the fusion
 layer. Every "safe" image contained NO hazard, so the label tracked hazard
@@ -862,7 +902,7 @@ error will lower both.
   body-like boxes if a consistent physical scale is required; the current
   set does not apply that restriction.
 
-### 11.2 Supporting evidence for the centroid-vs-edge ablation
+### 12.2 Supporting evidence for the centroid-vs-edge ablation
 
 Manual inspection produced a concrete motivating example, independent of
 any model: in several images a child is bent directly over a small hazard
@@ -872,7 +912,7 @@ third of the frame, **centroid-to-centroid distance reads ≈ 0.4
 correctly read these as close. This is qualitative support for the
 hypothesis behind ablation 3c, and can be used as a figure.
 
-### 11.3 Additional known limitations
+### 12.3 Additional known limitations
 
 - **Evaluation-set composition.** The co-occurrence set contains only 3 of
   the 12 hazard classes (Knife, Scissors, Coin) and is coin-dominated, so
@@ -913,18 +953,29 @@ hypothesis behind ablation 3c, and can be used as a figure.
   the hazard resolution choice as validated under the final configuration
   only, not as optimizer-independent.
 
-### 11.4 Remaining work
+### 12.4 Remaining work
 
-| Phase | Status | Note |
+All planned phases are complete. Everything below is optional.
+
+**Completed**
+
+| Item | Result |
+|---|---|
+| 3a Resolution ablation | Child 416, hazard 640 (§5); child re-run inverted the ranking (§5.2b) |
+| 3b Optimizer ablation | AdamW selected (§6) |
+| 3c Distance reference | No stable difference; centroid retained (§8) |
+| 4a Final models | Tuned hazard config underperforms baseline; baseline shipped (§7) |
+| 4b Threshold calibration | centroid 0.3625 @ conf 0.05, validation-calibrated (§8.3) |
+| 5 Evaluation | Test splits used once; risk fusion 0.595 balanced, CI includes chance (§9) |
+| 6 Tables and figures | 10 tables, 47 figures, generated from the CSVs (§10) |
+| Per-class regeneration | `per_class_hazard_final.csv` under pinned 8.4.106 |
+| Computational cost | 7.24 ms/frame for both detectors (§7.3) |
+
+**Optional, none required for the write-up**
+
+| Item | Cost | Why it might be worth doing |
 |---|---|---|
-| 3b Optimizer ablation | **Done** | AdamW selected. See §6. |
-| — Child 3a re-run at `lr0=0.002` | **Done** | Ranking inverted: 416 beats 640. See §5.2b. |
-| — Seed variance | Recommended | All results are single-seed (`seed=0`, deterministic). 3 seeds on one config would give an error bar (see §6.4). |
-| 3c Distance reference | **Done** | No stable difference; centroid retained (§8). |
-| 4a Final models | **Done** | See §7. Hazard tuned config underperforms baseline. |
-| — Hazard final-model choice | **Decided** | Baseline config shipped as `models/hazard_best.pt` (§7.1). |
-| — Reproducible hazard retrain | **Optional, low priority** | ~2.4 h. Would NOT improve accuracy - same config, stated explicitly. Only removes the `auto`/version caveats. Risk: 8.4.x changed head init, so the number may not land at 0.5657. Documented caveat is defensible without it. |
-| 4b Threshold calibration | **Done** | centroid 0.3625 @ conf 0.05, val-calibrated (§8.3). |
-| 5 Evaluation | **Done** | Test splits evaluated once (§9). Risk fusion 0.595 balanced, CI includes chance. |
-| — Per-class regeneration | **Done** | `per_class_hazard_final.csv`, pinned 8.4.106 (§7). |
-| — Computational cost | **Done** | 7.24 ms/frame for both detectors (§7.3). |
+| Seed variance | ~1.5 h | Every result is single-seed (`seed=0`, deterministic), so differences of 0.01-0.02 cannot be separated from noise. Three seeds on one configuration would give an error bar for the whole paper (§6.4). |
+| Phase 2 re-sweep | ~3 h | `lr0` narrowed to (1e-4, 2e-3) so `box`/`cls`/`dfl` are explored at a sane learning rate rather than being swamped (§4.2). Low expected gain; a null result would itself be reportable. |
+| Reproducible hazard retrain | ~2.4 h | Same configuration stated explicitly rather than via `optimizer=auto`, under the pinned version. **Would not improve accuracy** and risks not reproducing 0.5657 exactly. The documented caveat is defensible without it (`models/README.md`). |
+| Human-labelled co-occurrence set | manual | The only way to settle centroid-vs-edge non-circularly, and the only way to show proximity predicts real-world risk rather than constructed geometry (§11.1, §8). |
