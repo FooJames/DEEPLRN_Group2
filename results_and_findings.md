@@ -490,11 +490,32 @@ necessarily the one that trains best over five times as long. The tuned
 `dfl` (1.06 vs the default 1.5) and `cls` (0.75 vs 0.5) plausibly favour
 early convergence at the cost of final quality.
 
-**Consequence for the delivered system.** The best hazard detector we have
-is the *baseline* configuration (AdamW at ultralytics' auto-derived
-lr = 6.25e-4 with default loss weights), not the tuned one. The tuned
-weights should not be shipped as the final hazard model simply because they
-came later in the pipeline.
+**Consequence for the delivered system - decision taken.** The **baseline
+configuration is shipped as the final hazard detector** (AdamW at
+ultralytics' auto-derived lr = 6.25e-4, default loss weights, imgsz 640,
+100 epochs), not the tuned one. The tuned weights are retained at
+`runs/detect/final_hazard` for the record. Deliverables are:
+
+| File | Config | mAP50 | mAP50-95 |
+|---|---|---|---|
+| `models/child_best.pt` | imgsz 416, lr0 0.002, default weights | 0.9554 | 0.8353 |
+| `models/hazard_best.pt` | imgsz 640, lr0 6.25e-4, default weights | 0.5657 | 0.4072 |
+
+The two detectors run at **different input resolutions**; inference code
+must resize per model.
+
+**Two reproducibility caveats on the shipped hazard weights**, both of which
+must be stated rather than glossed:
+
+1. That run used `optimizer=auto`, so its `args.yaml` records `lr0: 0.01`
+   while the value actually used was **6.25e-4** - reproducing from the
+   recorded arguments would use the wrong learning rate (§3).
+2. It predates the `ultralytics==8.4.106` pin, so its exact version is
+   unrecorded.
+
+Retraining the same configuration explicitly under the pinned version
+(~2.4 h) would remove both and is recommended before final submission. See
+`models/README.md`.
 
 **Consequence for the ablations.** Phases 3a and 3b held the tuned hazard
 config fixed. Their internal comparisons remain valid - every condition
@@ -730,7 +751,8 @@ hypothesis behind ablation 3c, and can be used as a figure.
 | — Seed variance | Recommended | All results are single-seed (`seed=0`, deterministic). 3 seeds on one config would give an error bar (see §6.4). |
 | 3c Distance reference | **Unblocked** | Eval set built (§9.1). Run after Phase 4a so it uses the final detectors. |
 | 4a Final models | **Done** | See §7. Hazard tuned config underperforms baseline. |
-| — Hazard final-model choice | **Decision needed** | Ship the baseline config (0.5657) rather than the tuned one (0.5256)? See §7.1. |
+| — Hazard final-model choice | **Decided** | Baseline config shipped as `models/hazard_best.pt` (§7.1). |
+| — Reproducible hazard retrain | Recommended | ~2.4 h. Shipped weights used `optimizer=auto` (args.yaml lr0 is wrong) and predate the version pin. |
 | 4b Threshold calibration | Ready | Runs together with 3c. |
 | 5 Evaluation | Ready after 3c | Both test splits (detector + co-occurrence) still untouched. |
 | — Per-class regeneration | **Done** | `per_class_hazard_final.csv`, pinned 8.4.106 (§7). |
