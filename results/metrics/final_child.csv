@@ -1,0 +1,2 @@
+model,imgsz,epochs,optimizer,lr0,box,cls,dfl,precision,recall,mAP50,mAP50_95,train_min,infer_ms,baseline_mAP50,baseline_mAP50_95,delta_mAP50,delta_mAP50_95
+child,416,100,AdamW,0.002,default,default,default,0.95676,0.89395,0.95535,0.83526,34.94,3.051,0.9469,0.8271,0.00845,0.00816

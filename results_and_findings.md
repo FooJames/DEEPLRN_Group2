@@ -8,8 +8,9 @@ Distinct from `PROGRESS.md`, which is a session-by-session work log. This
 file is organised for the write-up: what we ran, what we got, and what we
 can honestly claim.
 
-**Status:** Phases 0–3b complete (child resolution ablation re-run and corrected).
-Phase 4a (detector retraining) and 3c are now unblocked — see [Open Items](#8-open-items-and-blockers).
+**Status:** Phases 0–4a complete. Final models trained; the tuned hazard
+configuration was found to UNDERPERFORM the baseline (§7.1).
+Phase 3c/4b/5 remain open — see [Open Items](#9-open-items-and-blockers).
 
 ---
 
@@ -459,7 +460,86 @@ longer training.
 
 ---
 
-## 7. Cross-phase summary
+## 7. Phase 4a - Final models
+
+Both detectors trained for **100 epochs** at the configuration locked by
+Phases 2-3 - the same budget as the Phase 1 baselines, making this the
+first fair test of whether the tuning helped.
+
+| | imgsz | lr0 | box/cls/dfl | Final mAP50 | Final mAP50-95 | Baseline | Delta |
+|---|---|---|---|---|---|---|---|
+| Child | 416 | 0.002 | defaults | **0.9554** | **0.8353** | 0.9469 / 0.8271 | **+0.008 / +0.008** |
+| Hazard | 640 | 8.8e-4 | tuned | 0.5256 | 0.3913 | 0.5657 / 0.4072 | **-0.040 / -0.016** |
+
+### 7.1 The headline finding: tuning made the hazard detector worse
+
+At equal budget, equal resolution and the same optimizer, the Phase 2
+configuration is **0.040 mAP50 below** the untuned baseline. It is worse in
+**10 of 12 classes**, including large drops for Chainsaw (-0.174),
+Screwdriver (-0.088) and Stapler (-0.060).
+
+This is the answer to a question that could not be settled earlier: the
+20-epoch comparison used during tuning suggested the tuned config was ahead
+by +0.038, but that comparison was confounded by the learning-rate schedule
+(§4.2). With the confound removed, the direction reverses.
+
+**Interpretation - the tuning proxy did not transfer.** Hyperparameters were
+selected on 20-epoch runs and applied to 100-epoch training. A configuration
+that converges quickly under a short, fully-annealed schedule is not
+necessarily the one that trains best over five times as long. The tuned
+`dfl` (1.06 vs the default 1.5) and `cls` (0.75 vs 0.5) plausibly favour
+early convergence at the cost of final quality.
+
+**Consequence for the delivered system.** The best hazard detector we have
+is the *baseline* configuration (AdamW at ultralytics' auto-derived
+lr = 6.25e-4 with default loss weights), not the tuned one. The tuned
+weights should not be shipped as the final hazard model simply because they
+came later in the pipeline.
+
+**Consequence for the ablations.** Phases 3a and 3b held the tuned hazard
+config fixed. Their internal comparisons remain valid - every condition
+shared the same config - but their absolute numbers sit on a configuration
+now known to be sub-optimal, and the resolution and optimizer conclusions
+have not been re-verified under the baseline hyperparameters.
+
+### 7.2 Child: a small accuracy gain and a large efficiency gain
+
+The child detector improved by +0.008 on both metrics. That is small, and
+comparable in size to the leakage inflation measured in §2.2, so it should
+not be over-claimed. **The substantial result is cost**: at `imgsz=416` the
+final model trained in **35 minutes versus roughly 130 for the 640 baseline
+(3.7x faster)** and runs inference at 3.05 ms/image, while matching or
+slightly exceeding baseline accuracy. Note this compares whole
+configurations, not a single hyperparameter, since resolution changed too.
+
+### 7.3 Computational cost of the dual-detector design
+
+Measured on a T4 at the final configuration:
+
+| Model | Inference |
+|---|---|
+| Child (416) | 3.05 ms/image |
+| Hazard (640) | 4.19 ms/image |
+| **Both per frame** | **7.24 ms** (~138 fps) |
+
+This is the figure the proposal's introduction promises but never planned
+to measure. Even running two detectors per frame, the pipeline is far above
+real-time on modest hardware, so the cost objection to a dual-specialist
+design does not hold at this model scale.
+
+### 7.4 Run integrity
+
+Both runs completed the full 100 epochs with the intended configuration,
+verified from `args.yaml`. The child run was interrupted and resumed at
+epoch 61; it was confirmed continuous (epochs 1-100 unbroken, mAP50 steady
+at 0.948-0.950 across the boundary rather than dropping toward zero as a
+fresh restart would). Its wall-clock timer reset on resume, so true training
+time is 85.7 min rather than the 35 min recorded for the resumed portion
+alone.
+
+---
+
+## 8. Cross-phase summary
 
 | Configuration | Optimizer | lr0 | imgsz | Epochs | mAP50 | mAP50-95 |
 |---|---|---|---|---|---|---|
@@ -478,6 +558,10 @@ differs. The tuned configuration has not yet been trained at full length;
 that happens in Phase 4, which is the run that determines whether tuning
 improves the final model.
 
+**Superseded by §7.1:** the hazard row below reflects the Phase 2/3
+selection, which Phase 4a showed to be worse than the baseline at full
+budget. Retained to show what was selected and why.
+
 **Configuration selected for Phase 4:** YOLOv8n, **AdamW**, full epoch
 budget (100), with the caveat that the hazard detector plateaus near
 epoch 50. The two detectors use **different input resolutions**, which is
@@ -490,9 +574,9 @@ legitimate given they are trained and deployed independently:
 
 ---
 
-## 8. Open items and blockers
+## 9. Open items and blockers
 
-### 8.1 The fusion evaluation set (resolved by construction)
+### 9.1 The fusion evaluation set (resolved by construction)
 
 **Original problem.** The first labelled set could not test the fusion
 layer. Every "safe" image contained NO hazard, so the label tracked hazard
@@ -586,7 +670,7 @@ error will lower both.
   body-like boxes if a consistent physical scale is required; the current
   set does not apply that restriction.
 
-### 8.2 Supporting evidence for the centroid-vs-edge ablation
+### 9.2 Supporting evidence for the centroid-vs-edge ablation
 
 Manual inspection produced a concrete motivating example, independent of
 any model: in several images a child is bent directly over a small hazard
@@ -596,7 +680,7 @@ third of the frame, **centroid-to-centroid distance reads ≈ 0.4
 correctly read these as close. This is qualitative support for the
 hypothesis behind ablation 3c, and can be used as a figure.
 
-### 8.3 Additional known limitations
+### 9.3 Additional known limitations
 
 - **Evaluation-set composition.** The co-occurrence set contains only 3 of
   the 12 hazard classes (Knife, Scissors, Coin) and is coin-dominated, so
@@ -637,15 +721,17 @@ hypothesis behind ablation 3c, and can be used as a figure.
   the hazard resolution choice as validated under the final configuration
   only, not as optimizer-independent.
 
-### 8.4 Remaining work
+### 9.4 Remaining work
 
 | Phase | Status | Note |
 |---|---|---|
 | 3b Optimizer ablation | **Done** | AdamW selected. See §6. |
 | — Child 3a re-run at `lr0=0.002` | **Done** | Ranking inverted: 416 beats 640. See §5.2b. |
 | — Seed variance | Recommended | All results are single-seed (`seed=0`, deterministic). 3 seeds on one config would give an error bar (see §6.4). |
-| 3c Distance reference | **Unblocked** | Eval set built (§8.1). Run after Phase 4a so it uses the final detectors. |
-| 4 Final models + fusion | **Unblocked** | 4a retrain now; 4b calibration runs together with 3c. |
+| 3c Distance reference | **Unblocked** | Eval set built (§9.1). Run after Phase 4a so it uses the final detectors. |
+| 4a Final models | **Done** | See §7. Hazard tuned config underperforms baseline. |
+| — Hazard final-model choice | **Decision needed** | Ship the baseline config (0.5657) rather than the tuned one (0.5256)? See §7.1. |
+| 4b Threshold calibration | Ready | Runs together with 3c. |
 | 5 Evaluation | Ready after 3c | Both test splits (detector + co-occurrence) still untouched. |
-| — Per-class regeneration | Pending | Regenerate §3.1 under pinned 8.4.106. |
-| — Computational cost | Partly done | `infer_ms` collected per resolution; still need two-model-vs-one pipeline comparison. |
+| — Per-class regeneration | **Done** | `per_class_hazard_final.csv`, pinned 8.4.106 (§7). |
+| — Computational cost | **Done** | 7.24 ms/frame for both detectors (§7.3). |

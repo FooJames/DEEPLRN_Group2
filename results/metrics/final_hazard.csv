@@ -1,0 +1,2 @@
+model,imgsz,epochs,optimizer,lr0,box,cls,dfl,precision,recall,mAP50,mAP50_95,train_min,infer_ms,baseline_mAP50,baseline_mAP50_95,delta_mAP50,delta_mAP50_95
+hazard,640,100,AdamW,0.00088,8.14272,0.75027,1.05913,0.58883,0.52697,0.52561,0.39133,158.45,4.191,0.5657,0.4072,-0.04009,-0.01587
