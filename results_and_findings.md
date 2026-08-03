@@ -10,7 +10,7 @@ can honestly claim.
 
 **Status:** Phases 0–4a complete. Final models trained; the tuned hazard
 configuration was found to UNDERPERFORM the baseline (§7.1).
-Phase 3c/4b/5 remain open — see [Open Items](#9-open-items-and-blockers).
+Phase 5 remains open — see [Open Items](#10-open-items-and-blockers).
 
 ---
 
@@ -514,8 +514,12 @@ must be stated rather than glossed:
    unrecorded.
 
 Retraining the same configuration explicitly under the pinned version
-(~2.4 h) would remove both and is recommended before final submission. See
-`models/README.md`.
+(~2.4 h) would remove both caveats. It would **not** be expected to improve
+accuracy - it is the same configuration, merely stated rather than implied -
+and it carries a risk of its own, since 8.4.x changed head initialisation
+and the rerun might not land at 0.5657. Documenting the caveats, as done
+here and in `models/README.md`, is defensible on its own; the retrain is
+optional polish, not a correction.
 
 **Consequence for the ablations.** Phases 3a and 3b held the tuned hazard
 config fixed. Their internal comparisons remain valid - every condition
@@ -560,7 +564,72 @@ alone.
 
 ---
 
-## 8. Cross-phase summary
+## 8. Phase 3c - Distance reference: centroid vs nearest edge
+
+Both final detectors were run over the co-occurrence validation split and a
+threshold was calibrated for each candidate distance metric. The same
+predictions feed both, so only the proximity measure varies.
+
+Reported as **balanced accuracy** (mean of unsafe-recall and safe-recall).
+The split is 74 % unsafe, so plain accuracy rewards a constant "unsafe"
+predictor with 0.740; balanced accuracy scores any constant predictor 0.500
+and is the honest headline.
+
+### 8.1 Result: no stable difference between the two metrics
+
+| Detector confidence | Centroid | Nearest-edge | Difference |
+|---|---|---|---|
+| 0.25 (ultralytics default) | 0.6683 | 0.6425 | centroid +0.026 |
+| 0.05 | 0.6705 | **0.6726** | edge +0.002 |
+| 0.01 | 0.6126 | 0.5307 | centroid +0.082 |
+
+**The ranking flips with the detector's confidence threshold** - a parameter
+belonging to the detectors, not the fusion layer. No ordering survives that
+change, so the honest conclusion is that **the two distance references
+perform equivalently on this benchmark**, and the project's original choice
+of centroid distance needs no revision.
+
+At the best operating point (conf 0.05) the calibrated thresholds are
+**centroid 0.3625** and **edge 0.0747**, with balanced accuracy ~0.67 against
+0.500 for a constant predictor - so the fusion rule carries real but modest
+signal.
+
+### 8.2 The dominant error source is detection, not geometry
+
+| Detector confidence | Images with no hazard found | Forced "Safe" by the fusion rule |
+|---|---|---|
+| 0.25 | 70 / 123 | **57 %** |
+| 0.05 | 27 / 123 | 22 % |
+| 0.01 | 7 / 123 | 6 % |
+
+At the default confidence the hazard detector misses the pasted hazard in
+**57 % of images**, and the fusion rule labels those Safe without ever
+computing a distance. Under those conditions both metrics score *below* the
+trivial baseline on plain accuracy (0.569 and 0.561 versus 0.740).
+
+**This is the practically important finding of Phase 3c: how the distance is
+measured matters far less than whether the hazard is detected at all.**
+Effort spent refining the geometric rule is misdirected while the detector
+misses more than half the hazards. The composited hazards are small (median
+44x60 px) and lack lighting or perspective matching, which plausibly
+depresses confidence relative to naturally occurring hazards - so the
+detection rate here should be read as a property of this benchmark, not a
+general figure.
+
+### 8.3 Consequences
+
+- **Phase 4b threshold:** centroid distance at **0.3625**, detector
+  confidence **0.05**, calibrated on validation only.
+- **Confidence must be reported as a system parameter.** It was left at the
+  ultralytics default until this ablation, and it changes balanced accuracy
+  by more than either distance metric does.
+- The earlier oracle experiment on ground-truth boxes (§10.1) gave edge a
+  19-point advantage. That advantage does not survive contact with real
+  detections, which is precisely why the ablation was run on predictions.
+
+---
+
+## 9. Cross-phase summary
 
 | Configuration | Optimizer | lr0 | imgsz | Epochs | mAP50 | mAP50-95 |
 |---|---|---|---|---|---|---|
@@ -595,9 +664,9 @@ legitimate given they are trained and deployed independently:
 
 ---
 
-## 9. Open items and blockers
+## 10. Open items and blockers
 
-### 9.1 The fusion evaluation set (resolved by construction)
+### 10.1 The fusion evaluation set (resolved by construction)
 
 **Original problem.** The first labelled set could not test the fusion
 layer. Every "safe" image contained NO hazard, so the label tracked hazard
@@ -691,7 +760,7 @@ error will lower both.
   body-like boxes if a consistent physical scale is required; the current
   set does not apply that restriction.
 
-### 9.2 Supporting evidence for the centroid-vs-edge ablation
+### 10.2 Supporting evidence for the centroid-vs-edge ablation
 
 Manual inspection produced a concrete motivating example, independent of
 any model: in several images a child is bent directly over a small hazard
@@ -701,7 +770,7 @@ third of the frame, **centroid-to-centroid distance reads ≈ 0.4
 correctly read these as close. This is qualitative support for the
 hypothesis behind ablation 3c, and can be used as a figure.
 
-### 9.3 Additional known limitations
+### 10.3 Additional known limitations
 
 - **Evaluation-set composition.** The co-occurrence set contains only 3 of
   the 12 hazard classes (Knife, Scissors, Coin) and is coin-dominated, so
@@ -742,18 +811,18 @@ hypothesis behind ablation 3c, and can be used as a figure.
   the hazard resolution choice as validated under the final configuration
   only, not as optimizer-independent.
 
-### 9.4 Remaining work
+### 10.4 Remaining work
 
 | Phase | Status | Note |
 |---|---|---|
 | 3b Optimizer ablation | **Done** | AdamW selected. See §6. |
 | — Child 3a re-run at `lr0=0.002` | **Done** | Ranking inverted: 416 beats 640. See §5.2b. |
 | — Seed variance | Recommended | All results are single-seed (`seed=0`, deterministic). 3 seeds on one config would give an error bar (see §6.4). |
-| 3c Distance reference | **Unblocked** | Eval set built (§9.1). Run after Phase 4a so it uses the final detectors. |
+| 3c Distance reference | **Done** | No stable difference; centroid retained (§8). |
 | 4a Final models | **Done** | See §7. Hazard tuned config underperforms baseline. |
 | — Hazard final-model choice | **Decided** | Baseline config shipped as `models/hazard_best.pt` (§7.1). |
-| — Reproducible hazard retrain | Recommended | ~2.4 h. Shipped weights used `optimizer=auto` (args.yaml lr0 is wrong) and predate the version pin. |
-| 4b Threshold calibration | Ready | Runs together with 3c. |
+| — Reproducible hazard retrain | **Optional, low priority** | ~2.4 h. Would NOT improve accuracy - same config, stated explicitly. Only removes the `auto`/version caveats. Risk: 8.4.x changed head init, so the number may not land at 0.5657. Documented caveat is defensible without it. |
+| 4b Threshold calibration | **Done** | centroid 0.3625 @ conf 0.05, val-calibrated (§8.3). |
 | 5 Evaluation | Ready after 3c | Both test splits (detector + co-occurrence) still untouched. |
 | — Per-class regeneration | **Done** | `per_class_hazard_final.csv`, pinned 8.4.106 (§7). |
 | — Computational cost | **Done** | 7.24 ms/frame for both detectors (§7.3). |

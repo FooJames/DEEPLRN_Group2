@@ -1,0 +1,3 @@
+split,metric,threshold,n_images,n_unsafe,balanced_accuracy,accuracy,specificity,precision,recall,tp,fp,fn,tn,no_child_imgs,no_hazard_imgs,conf
+val,centroid,0.36245,123,91,0.6705,0.70732,0.59375,0.83951,0.74725,68,13,23,19,0,27,0.05
+val,edge,0.07471,123,91,0.67256,0.65041,0.71875,0.86364,0.62637,57,9,34,23,0,27,0.05
