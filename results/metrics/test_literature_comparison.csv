@@ -1,0 +1,8 @@
+system,model,evaluated on,reported,why not directly comparable
+This work (child),YOLOv8n,child-detection-piuns test,0.9670 mAP50,-
+This work (hazard),YOLOv8n,harmful-objects test,0.5506 mAP50,-
+This work (risk fusion),dual YOLOv8n + distance rule,composited co-occurrence test,0.5947 balanced acc,-
+Ahmad et al. (2025),YOLOv8l,own merged child+hazard set,~0.90 mAP,different dataset and classes; larger model (l vs n)
+AlMhdawi et al. (2026),YOLOv8 dual,fire/engineering sites,n/a,different domain; one detector is COCO-pretrained
+Ramadan et al. (2025),YOLOv11n + pose,hand-to-mouth,0.92 / 0.74 acc,"different task: hand-to-mouth, not child-hazard distance"
+Khan & Dey (2024),classifier,ChildSUn,n/a,classification only; no spatial reasoning

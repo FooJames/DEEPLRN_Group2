@@ -1,0 +1,2 @@
+n_images,n_unsafe,metric,threshold,conf,accuracy,balanced_accuracy,precision,recall,specificity,tp,fp,fn,tn,no_detection_imgs
+77,46,centroid,0.3625,0.05,0.5974,0.59467,0.68293,0.6087,0.58065,28,13,18,18,28

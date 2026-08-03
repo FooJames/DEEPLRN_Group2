@@ -8,9 +8,8 @@ Distinct from `PROGRESS.md`, which is a session-by-session work log. This
 file is organised for the write-up: what we ran, what we got, and what we
 can honestly claim.
 
-**Status:** Phases 0–4a complete. Final models trained; the tuned hazard
-configuration was found to UNDERPERFORM the baseline (§7.1).
-Phase 5 remains open — see [Open Items](#10-open-items-and-blockers).
+**Status:** ALL PHASES COMPLETE (0-5). Test splits evaluated once, §9.
+Remaining items are optional polish — see [Open Items](#11-open-items-and-blockers).
 
 ---
 
@@ -623,13 +622,116 @@ general figure.
 - **Confidence must be reported as a system parameter.** It was left at the
   ultralytics default until this ablation, and it changes balanced accuracy
   by more than either distance metric does.
-- The earlier oracle experiment on ground-truth boxes (§10.1) gave edge a
+- The earlier oracle experiment on ground-truth boxes (§11.1) gave edge a
   19-point advantage. That advantage does not survive contact with real
   detections, which is precisely why the ablation was run on predictions.
 
 ---
 
-## 9. Cross-phase summary
+## 9. Phase 5 - Final evaluation on the held-out test splits
+
+Run once, with every parameter fixed in advance from the validation-calibrated
+Phase 3c result (centroid distance, threshold 0.3625, detector confidence
+0.05). Nothing was tuned or selected here. The test splits were untouched
+until this run.
+
+### 9.1 Detectors
+
+| Detector | imgsz | Test mAP50 | Test mAP50-95 | Val mAP50 |
+|---|---|---|---|---|
+| Child | 416 | **0.9670** | 0.9081 | 0.9554 |
+| Hazard | 640 | **0.5506** | 0.3958 | 0.5657 |
+
+The hazard detector generalises cleanly - test is 0.015 below validation,
+which is normal. **The child test figure should be read with §2.2 in mind:**
+its test split has the *highest* measured contamination (~21 % near-duplicates
+of training images, versus ~17 % in validation), which is the most likely
+reason test exceeds validation here. It is not evidence of unusually strong
+generalisation.
+
+### 9.2 Risk classification - the headline result
+
+| | Value |
+|---|---|
+| Balanced accuracy | **0.5947** |
+| 95 % confidence interval | **[0.483, 0.707]** |
+| Chance level | 0.500 - **inside the interval** |
+| Unsafe precision / recall | 0.683 / 0.609 |
+| Safe recall | 0.581 |
+| Confusion | tp 28, fp 13, fn 18, tn 18 |
+
+**With 77 test images, the risk-classification result is not statistically
+distinguishable from chance.** The point estimate is above chance and the
+validation result (0.6705) was more clearly so, but the confidence interval
+on the held-out set includes 0.500 and this must be stated plainly. The
+honest claim is that the fusion layer shows a modest positive signal that
+this test set is too small to confirm.
+
+**Validation-to-test drop: 0.6705 -> 0.5947 (-0.076).** Two contributing
+factors, both measurable:
+
+- **The threshold was calibrated on 123 validation images** and a single
+  scalar fitted on a set that size carries real variance. Some of the drop
+  is threshold overfitting.
+- **Detection got worse on test**: 36 % of test images had no hazard
+  detected (versus 22 % on validation at the same confidence), and every one
+  of those is forced to "Safe" by the fusion rule regardless of geometry.
+  This is the §8.2 finding reappearing, and it accounts for most of the 18
+  false negatives.
+
+### 9.3 Per-class hazard detection (test)
+
+| Class | mAP50 | | Class | mAP50 |
+|---|---|---|---|---|
+| Screwdriver | 0.995 | | Chainsaw | 0.566 |
+| Stapler | 0.800 | | Hammer | 0.364 |
+| Knife | 0.761 | | Axe | 0.363 |
+| Coin | 0.748 | | Drink | 0.289 |
+| Fork | 0.697 | | Dumbbell | 0.200 |
+| Scissors | 0.655 | | **Chisel** | **0.168** |
+
+The spread mirrors validation-set support (§3.1): classes with very few
+annotated instances score erratically in both directions - Screwdriver at
+0.995 is as untrustworthy as Chisel at 0.168, both resting on a handful of
+instances. Report the well-supported classes (Coin, Fork, Knife, Drink,
+Scissors) as the meaningful per-class evidence.
+
+### 9.4 Computational cost
+
+The two-detector pipeline costs **7.24 ms per frame on a T4** (child 3.05 +
+hazard 4.19, measured in Phase 4a, §7.3), i.e. roughly 138 fps. The Phase 5
+run above was executed on CPU and reports ~70 ms/frame; the T4 figure is the
+one to quote. Running two specialist detectors instead of one is therefore
+not a meaningful cost objection at this model scale.
+
+### 9.5 Comparison with published work
+
+| System | Model | Evaluated on | Reported |
+|---|---|---|---|
+| **This work (child)** | YOLOv8n | child-detection-piuns test | **0.967 mAP50** |
+| **This work (hazard)** | YOLOv8n | harmful-objects test | **0.551 mAP50** |
+| **This work (risk fusion)** | dual YOLOv8n + distance | composited co-occurrence test | **0.595 balanced acc** |
+| Ahmad et al. (2025) | YOLOv8**l** | own merged child+hazard set | ~0.90 mAP |
+| AlMhdawi et al. (2026) | dual YOLOv8 | fire / engineering sites | n/a |
+| Ramadan et al. (2025) | YOLOv11n + pose | hand-to-mouth | 0.92 / 0.74 acc |
+| Khan & Dey (2024) | classifier | ChildSUn | n/a |
+
+**These rows are not directly comparable and no ranking should be drawn from
+them.** Each system was evaluated on a different dataset with different
+classes; Ahmad et al. additionally used YOLOv8-large against our nano, and
+Ramadan et al. measured a different task entirely (hand-to-mouth proximity,
+not child-hazard proximity). Per the reframing agreed early in the project,
+the supported claim is that **independently trained specialist detectors
+reach performance competitive with published figures** - the child detector
+comfortably so, the 12-class hazard detector below Ahmad et al.'s single
+reported number on an easier, larger-model setup. This work does **not**
+establish that a dual-specialist design outperforms a unified one; that would
+require training a unified model on the union of these two datasets as an
+internal control, which was not done.
+
+---
+
+## 10. Cross-phase summary
 
 | Configuration | Optimizer | lr0 | imgsz | Epochs | mAP50 | mAP50-95 |
 |---|---|---|---|---|---|---|
@@ -664,9 +766,9 @@ legitimate given they are trained and deployed independently:
 
 ---
 
-## 10. Open items and blockers
+## 11. Open items and blockers
 
-### 10.1 The fusion evaluation set (resolved by construction)
+### 11.1 The fusion evaluation set (resolved by construction)
 
 **Original problem.** The first labelled set could not test the fusion
 layer. Every "safe" image contained NO hazard, so the label tracked hazard
@@ -760,7 +862,7 @@ error will lower both.
   body-like boxes if a consistent physical scale is required; the current
   set does not apply that restriction.
 
-### 10.2 Supporting evidence for the centroid-vs-edge ablation
+### 11.2 Supporting evidence for the centroid-vs-edge ablation
 
 Manual inspection produced a concrete motivating example, independent of
 any model: in several images a child is bent directly over a small hazard
@@ -770,7 +872,7 @@ third of the frame, **centroid-to-centroid distance reads ≈ 0.4
 correctly read these as close. This is qualitative support for the
 hypothesis behind ablation 3c, and can be used as a figure.
 
-### 10.3 Additional known limitations
+### 11.3 Additional known limitations
 
 - **Evaluation-set composition.** The co-occurrence set contains only 3 of
   the 12 hazard classes (Knife, Scissors, Coin) and is coin-dominated, so
@@ -811,7 +913,7 @@ hypothesis behind ablation 3c, and can be used as a figure.
   the hazard resolution choice as validated under the final configuration
   only, not as optimizer-independent.
 
-### 10.4 Remaining work
+### 11.4 Remaining work
 
 | Phase | Status | Note |
 |---|---|---|
@@ -823,6 +925,6 @@ hypothesis behind ablation 3c, and can be used as a figure.
 | — Hazard final-model choice | **Decided** | Baseline config shipped as `models/hazard_best.pt` (§7.1). |
 | — Reproducible hazard retrain | **Optional, low priority** | ~2.4 h. Would NOT improve accuracy - same config, stated explicitly. Only removes the `auto`/version caveats. Risk: 8.4.x changed head init, so the number may not land at 0.5657. Documented caveat is defensible without it. |
 | 4b Threshold calibration | **Done** | centroid 0.3625 @ conf 0.05, val-calibrated (§8.3). |
-| 5 Evaluation | Ready after 3c | Both test splits (detector + co-occurrence) still untouched. |
+| 5 Evaluation | **Done** | Test splits evaluated once (§9). Risk fusion 0.595 balanced, CI includes chance. |
 | — Per-class regeneration | **Done** | `per_class_hazard_final.csv`, pinned 8.4.106 (§7). |
 | — Computational cost | **Done** | 7.24 ms/frame for both detectors (§7.3). |

@@ -1,0 +1,3 @@
+model,split,imgsz,precision,recall,mAP50,mAP50_95,infer_ms
+child,test,416,0.9394,0.92285,0.967,0.90811,20.936
+hazard,test,640,0.70943,0.48767,0.55059,0.39576,49.701

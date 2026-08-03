@@ -35,11 +35,15 @@ Two things about this run are worth stating plainly in the write-up:
    the decision to pin `ultralytics==8.4.106`, so the exact version is
    unknown. Everything from Phase 2 onward is pinned.
 
-To remove both caveats, retrain this configuration explicitly — AdamW,
-`lr0=6.25e-4`, default loss weights (7.5 / 0.5 / 1.5), `imgsz=640`, 100
-epochs — under the pinned version (~2.4 h on a T4). That would make the
-headline model exactly reproducible. Until then, quote the numbers with the
-caveat rather than presenting the run as reproducible.
+Retraining this configuration explicitly — AdamW, `lr0=6.25e-4`, default
+loss weights (7.5 / 0.5 / 1.5), `imgsz=640`, 100 epochs — under the pinned
+version (~2.4 h on a T4) would remove both caveats.
+
+**This would not improve accuracy.** It is the same configuration `auto`
+already resolved to, merely written down. It also carries a risk: 8.4.x
+changed head initialisation, so the rerun might not reproduce 0.5657 exactly,
+which would leave a new number to explain. Treat it as optional polish, not
+a correction — quoting the numbers with the caveats above is defensible.
 
 ## Regenerating
 
