@@ -20,7 +20,7 @@ future re-version can't silently change your split:
     python scripts/download_data.py --child-version N --hazard-version M
 
 After download it prints image counts per split and flags any mismatch
-against the numbers recorded in context.md (5,917 child / 4,705 hazard).
+against the numbers recorded in context.md (4,705 child / 5,917 hazard).
 """
 
 import argparse
@@ -28,8 +28,8 @@ import os
 import sys
 
 EXPECTED = {  # from context.md — used only to flag mismatches, not to gate
-    "child":  {"images": 5917, "classes": 1},
-    "hazard": {"images": 4705, "classes": 12},
+    "child":  {"images": 4705, "classes": 1},
+    "hazard": {"images": 5917, "classes": 12},
 }
 DATASETS = {
     "child":  {"workspace": "sotukenn",         "project": "child-detection-piuns"},

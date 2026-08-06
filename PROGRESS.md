@@ -50,6 +50,20 @@ Remaining work is **optional polish only**, none of it needed for the paper:
 
 ## Log
 
+**2026-08-06 — Added `scripts/risk_fusion.py` + root `README.md`.** The fusion
+layer was only ever embedded in `evaluate.py`; the standalone script promised in
+context.md's deliverables did not exist. Its `classify()` matches `evaluate.py`
+exactly (25 val images x both metrics, 0 mismatches). No numbers changed.
+Also `notebooks/colab_risk_fusion.ipynb` — the demo needs no GPU, key or
+dataset, since `models/*.pt` are committed and the clone is self-sufficient.
+`README.md` now carries a 6-step setup guide.
+
+**Fixed `download_data.py`'s transposed EXPECTED counts** (had child 5917 /
+hazard 4705; on-disk truth is child 4705 / hazard 5917, matching context.md).
+It had been warning on every *correct* download since Phase 0 — the stale half
+of the 2026-07-25 transposition fix, which corrected context.md but not this
+script. Verified against the datasets on disk: both now match, no false warning.
+
 **2026-08-04** — Housekeeping: rewrote this file. Entries had grown to 9-10
 lines against the stated 1-3, and were out of chronological order. Detail
 moved to `results_and_findings.md`; operational gotchas promoted above.
