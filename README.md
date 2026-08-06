@@ -23,11 +23,53 @@ and two reproducibility caveats on the hazard weights.
 
 ## Setup
 
-**Prerequisites:** Python 3.10 or newer (developed on 3.10.6) and git. No GPU is
-needed — the demo runs on CPU, and all training was done on Colab.
+Two ways in. **Colab is the one this project was built around** — no local GPU
+was ever available, so every training run happened there. It also needs nothing
+installed. Use the local install if you want to run the demo offline or work on
+the code.
 
-Steps 1–4 are all you need to run the model. Steps 5–6 are only for
-re-running evaluation or training, which need the datasets.
+Either way, the datasets are a separate step, and only needed to reproduce
+numbers — not to run the model.
+
+## Option A — Google Colab (nothing to install)
+
+1. Go to [colab.research.google.com](https://colab.research.google.com) and sign
+   in with any Google account.
+2. **File → Open notebook → GitHub** tab.
+3. Paste `FooJames/DEEPLRN_Group2`, press Enter, and open
+   `notebooks/colab_risk_fusion.ipynb`.
+4. **Runtime → Run all.**
+5. Upload photos when the upload cell prompts you.
+
+The notebook installs the pinned `ultralytics` and clones this repo itself, so
+there is nothing to set up by hand. **No GPU, no Roboflow key and no dataset
+download** — the weight files are committed, so the clone is self-sufficient and
+the free CPU runtime is enough. Runtime → Change runtime type → T4 makes it
+faster but changes no result.
+
+### The other notebooks
+
+Only the demo is self-contained. The training and ablation notebooks reproduce
+the phases, and all of them need the datasets (see below):
+
+| Notebook | Phase | Needs |
+|---|---|---|
+| `colab_risk_fusion.ipynb` | the demo | **nothing** |
+| `colab_train.ipynb` | 1 — baseline training | key + data |
+| `colab_tune.ipynb` | 2 — hyperparameter sweep | Drive + key + data |
+| `colab_ablation_imgsz.ipynb` | 3a — input resolution | Drive + key + data |
+| `colab_ablation_optimizer.ipynb` | 3b — optimizer | Drive + key + data |
+| `colab_final_training.ipynb` | 4a — final detectors | Drive + key + data |
+
+"Drive" means the notebook mounts Google Drive and writes `runs/` there, because
+`/content` is wiped on disconnect and takes resume state with it. Note that
+`colab_train.ipynb` does **not** mount Drive — that lesson came later, so a
+disconnect during Phase 1 loses the run.
+
+## Option B — Local install
+
+**Prerequisites:** Python 3.10 or newer (developed on 3.10.6) and git. No GPU
+needed; the demo runs on CPU.
 
 ### 1. Clone
 
@@ -92,22 +134,30 @@ the verdict is. Don't read anything into the label on an arbitrary picture: at
 `conf 0.05` the detectors fire on very little evidence, and one of this repo's
 own result charts comes back `child=1 hazard=1`.
 
-Setup is done. Everything below is only needed to reproduce the numbers.
+Local setup is done.
 
-### 5. Roboflow API key (only for the datasets)
+## The datasets (either environment)
+
+Only needed to re-run evaluation, training or the ablations. The demo does not
+use them. On Colab, run these as cells with a `!` prefix — the training
+notebooks already contain them.
+
+### 1. Roboflow API key
 
 ```bash
 cp .env.example .env
 ```
 
 Fill in `ROBOFLOW_API_KEY` from Roboflow → Settings → API Keys (the *Private*
-key). `.env` is gitignored — **never commit the key.**
+key). `.env` is gitignored — **never commit the key.** On Colab, put it in
+Secrets (🔑 in the sidebar) named `ROBOFLOW_API_KEY` and the notebooks read it
+via `userdata.get`; don't paste it into a cell.
 
-### 6. Download the datasets
+### 2. Download
 
 `data/` is gitignored, so the datasets are not in the clone. The downloader
-needs one more package, deliberately not in step 3 since the demo doesn't use
-it:
+needs one more package, deliberately not in the install step since the demo
+doesn't use it:
 
 ```bash
 pip install roboflow
@@ -198,14 +248,11 @@ nothing, the fusion rule outputs Safe by definition (`context.md`, rule 1). The
 script flags those separately so a detector failure is not read as a safety
 judgement.
 
-### Running it without a terminal
+### Without a terminal
 
-`notebooks/colab_risk_fusion.ipynb` does the same thing in Google Colab: clone,
-upload photos, see the annotated results inline, download them as a zip. It
-needs **no GPU, no Roboflow key and no dataset** — the weights are committed, so
-the clone is self-sufficient and a free CPU runtime is enough.
-
-Same script, so the verdicts are identical either way.
+[Option A](#option-a--google-colab-nothing-to-install) does all of this in
+Colab — upload photos, see the annotated results inline, download them as a zip.
+It calls this same script, so the verdicts are identical either way.
 
 ## Other entry points
 
